@@ -65,6 +65,63 @@ interface TiingoRow {
   close: number
   volume: number
   adjClose?: number
+  splitFactor?: number
+}
+
+/**
+ * Reconstruct a SPLIT-ADJUSTED (not dividend-adjusted) series from Tiingo's raw
+ * prices, so it sits on the same basis as Twelve Data.
+ *
+ * This is the difference between reconciliation working and reconciliation
+ * being noise. The three bases in play:
+ *
+ *   Twelve Data close   split-adjusted, NOT dividend-adjusted
+ *   Tiingo close        raw, unadjusted
+ *   Tiingo adjClose     split AND dividend adjusted
+ *
+ * Comparing Twelve Data's close against Tiingo's raw close reports a 90%
+ * disagreement on every pre-split NVDA bar; comparing it against adjClose
+ * reports a steadily growing one as dividends accumulate. Neither is a real
+ * data problem — both are unit mismatches.
+ *
+ * Split-adjusted is chosen as the canonical basis because it is what the
+ * primary source provides natively, and because the product detects the price
+ * moves a person would actually see on a chart. Dividend adjustment would
+ * smooth away real ex-dividend gaps.
+ *
+ * Tiingo's `splitFactor` on a row means the split took effect ON that date, so
+ * the row itself is already post-split and only OLDER rows need dividing. Hence
+ * the backwards walk that applies the running factor before accumulating it.
+ */
+export function toSplitAdjusted(rows: TiingoRow[]): RawBar[] {
+  const ascending = [...rows].sort((a, b) =>
+    String(a.date).localeCompare(String(b.date)),
+  )
+
+  const out: RawBar[] = new Array(ascending.length)
+  let cumulative = 1
+
+  for (let i = ascending.length - 1; i >= 0; i--) {
+    const row = ascending[i]
+
+    out[i] = {
+      date: String(row.date).slice(0, 10),
+      open: Number(row.open) / cumulative,
+      high: Number(row.high) / cumulative,
+      low: Number(row.low) / cumulative,
+      close: Number(row.close) / cumulative,
+      closeAdj: Number(row.close) / cumulative,
+      // Share counts move inversely to price on a split.
+      volume: Number(row.volume ?? 0) * cumulative,
+    }
+
+    const factor = Number(row.splitFactor)
+    if (Number.isFinite(factor) && factor > 0 && factor !== 1) {
+      cumulative *= factor
+    }
+  }
+
+  return out
 }
 
 export function parseTiingo(
@@ -79,36 +136,33 @@ export function parseTiingo(
     throw new SourceDataError(sourceId, symbol, 'no rows in response')
   }
 
-  const bars: RawBar[] = []
-  for (const row of body as TiingoRow[]) {
-    const bar: RawBar = {
-      date: String(row.date).slice(0, 10),
-      open: Number(row.open),
-      high: Number(row.high),
-      low: Number(row.low),
-      close: Number(row.close),
-      closeAdj: Number(row.adjClose ?? row.close),
-      volume: Number(row.volume ?? 0),
-    }
+  const usable = (body as TiingoRow[]).filter(
+    (row) =>
+      Number.isFinite(Number(row.open)) &&
+      Number.isFinite(Number(row.high)) &&
+      Number.isFinite(Number(row.low)) &&
+      Number.isFinite(Number(row.close)),
+  )
 
-    if (
-      !Number.isFinite(bar.open) ||
-      !Number.isFinite(bar.high) ||
-      !Number.isFinite(bar.low) ||
-      !Number.isFinite(bar.close)
-    ) {
-      continue
-    }
-    if (!Number.isFinite(bar.closeAdj)) bar.closeAdj = bar.close
-    if (!Number.isFinite(bar.volume)) bar.volume = 0
-
-    bars.push(bar)
-  }
-
-  if (bars.length === 0) {
+  if (usable.length === 0) {
     throw new SourceDataError(sourceId, symbol, 'no usable rows in response')
   }
 
-  bars.sort((a, b) => a.date.localeCompare(b.date))
+  const bars = toSplitAdjusted(usable).map((b) => ({
+    ...b,
+    // Round to a sane precision: reconstruction can otherwise leave long
+    // floating tails that look like disagreement at the sixth decimal.
+    open: round6(b.open),
+    high: round6(b.high),
+    low: round6(b.low),
+    close: round6(b.close),
+    closeAdj: round6(b.closeAdj),
+    volume: Math.round(b.volume),
+  }))
+
   return bars
+}
+
+function round6(x: number): number {
+  return Math.round(x * 1e6) / 1e6
 }

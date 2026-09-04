@@ -44,25 +44,28 @@ async function seedInstruments() {
 
 async function seedDataSources() {
   // trustRank: lower wins when two sources disagree within tolerance.
-  // Stooq is ranked first for bars because it is our complete, gap-free history;
-  // Twelve Data is the independent cross-check.
+  // Twelve Data is primary (full history, 800 req/day); Tiingo is the
+  // independent cross-check that makes reconciliation meaningful.
   const sources = [
-    {
-      id: 'stooq',
-      kind: 'bar',
-      trustRank: 1,
-      rateLimit: { perMin: 60, perDay: 100000, burst: 10 },
-    },
     {
       id: 'twelvedata',
       kind: 'bar',
-      trustRank: 2,
+      trustRank: 1,
       rateLimit: { perMin: 8, perDay: 800, burst: 4 },
+    },
+    {
+      id: 'tiingo',
+      kind: 'bar',
+      trustRank: 2,
+      rateLimit: { perHour: 50, perDay: 1000, burst: 5 },
     },
     {
       id: 'finnhub',
       kind: 'earnings',
       trustRank: 1,
+      // Free tier serves FORWARD earnings only; historical windows return zero
+      // rows, so the earnings detector is live-only and is excluded from
+      // historical calibration.
       rateLimit: { perMin: 60, perDay: 100000, burst: 10 },
     },
   ]

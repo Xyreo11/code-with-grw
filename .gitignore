@@ -42,3 +42,7 @@ next-env.d.ts
 
 # keep the documented template committed
 !.env.example
+
+# Backfilled market-data fixtures are large; regenerate with scripts/backfill.ts
+# (a trimmed, committed subset is added separately for FIXTURE_MODE)
+/fixtures/bars/
