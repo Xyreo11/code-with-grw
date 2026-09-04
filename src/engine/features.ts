@@ -62,9 +62,11 @@ export function computeFeatures(
 
   const window = (arr: number[], n: number) => arr.slice(Math.max(0, arr.length - n))
 
-  const recent20 = window(closes, 20)
-  const recent60 = window(closes, 60)
-  const recent252 = window(closes, 252)
+  // Range extremes are measured over the sessions BEFORE today. Including
+  // today's own bar would make its high the range high, so "closed above the
+  // range" could never be true — the level would move with the price.
+  const priorHighs = highs.slice(0, highs.length - 1)
+  const priorLows = lows.slice(0, lows.length - 1)
 
   const vol20 = window(volumes, 20)
   const medianVolume20 = median(vol20) ?? 0
@@ -94,12 +96,12 @@ export function computeFeatures(
     atr14,
     sma20: sma(closes, 20) ?? last.closeAdj,
     sma50: sma(closes, 50) ?? last.closeAdj,
-    high20: Math.max(...window(highs, 20)),
-    low20: Math.min(...window(lows, 20)),
-    high60: Math.max(...window(highs, 60)),
-    low60: Math.min(...window(lows, 60)),
-    high52w: Math.max(...window(highs, 252)),
-    low52w: Math.min(...window(lows, 252)),
+    high20: Math.max(...window(priorHighs, 20)),
+    low20: Math.min(...window(priorLows, 20)),
+    high60: Math.max(...window(priorHighs, 60)),
+    low60: Math.min(...window(priorLows, 60)),
+    high52w: Math.max(...window(priorHighs, 252)),
+    low52w: Math.min(...window(priorLows, 252)),
     rvol,
     medianVolume20,
     betaSpy: marketReg?.beta ?? null,

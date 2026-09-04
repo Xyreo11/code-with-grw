@@ -177,7 +177,9 @@ function applyFinalBarInjection(
   }
 
   if (inject.kind === 'rangeBreak') {
-    const lookback = out.slice(Math.max(0, lastIdx - 20), lastIdx)
+    // 60 bars, matching the longer range the detector prefers. Breaking only
+    // the 20-day range would leave the close inside the 60-day one.
+    const lookback = out.slice(Math.max(0, lastIdx - 60), lastIdx)
     const hi = Math.max(...lookback.map((b) => b.high))
     const lo = Math.min(...lookback.map((b) => b.low))
     // Approximate ATR from the same window the detector will use.
