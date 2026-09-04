@@ -30,8 +30,10 @@ Open http://localhost:3000 and sign in as `demo@sitrep.local` / `sitrep-demo`.
 | `/admin/pipeline` | Ingest runs, data quality, engine version |
 
 ```bash
-npm test              # 130 tests, engine + ingestion
+npm test              # 130 unit tests, engine + ingestion
+npm run test:e2e      # 4 Playwright journeys through a real browser
 npm run calibrate     # replay history, rewrite docs/calibration.md
+npx tsx scripts/verify-requirements.ts   # 25 checks against the brief's minimums
 ```
 
 ### Background ingestion (optional, needs API keys)
@@ -224,7 +226,9 @@ Replay is only honest if the engine at date *T* sees exactly what it would have 
 
 ## Testing
 
-130 tests. Every detector has a **firing fixture and a must-not-fire fixture** — a detector that only ever fires is indistinguishable from a broken one, and on a product whose promise is filtering noise, false positives are the expensive failure.
+130 unit tests, 4 browser journeys, and 25 scored checks against the brief's three minimums.
+
+Every detector has a **firing fixture and a must-not-fire fixture** — a detector that only ever fires is indistinguishable from a broken one, and on a product whose promise is filtering noise, false positives are the expensive failure.
 
 Market data cannot produce "a 3.2σ gap on otherwise calm tape" on demand, so `src/engine/testing/synthetic.ts` generates seeded series with injectable events. Real history is used for calibration; synthetic series prove the detectors respond to the thing they claim to detect.
 
@@ -234,6 +238,13 @@ Several tests exist specifically to pin down bugs that were written and then cau
 - sector divergence fired on 0.16% moves (tight residual distributions inflate z-scores)
 - the session-move validator rejected 9,008 valid rows across a gap in the series
 - a 2:1 split deliberately passes the validator — documented as a limitation rather than faked
+
+The browser suite is deliberately thin: four journeys covering the three
+minimums plus replay. Broad UI coverage of a product whose logic already has 130
+unit tests would be slow to run, slower to maintain, and would mostly re-test
+React. It did earn its place immediately though — it caught the acknowledge
+button hiding a card optimistically without ever re-reading the brief, so the
+cursor and the screen disagreed until the next navigation.
 
 ---
 

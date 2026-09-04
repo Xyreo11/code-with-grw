@@ -17,7 +17,8 @@
     "fixtures:load": "tsx scripts/load-fixtures.ts",
     "fixtures:trim": "tsx scripts/trim-fixtures.ts",
     "demo:reset": "tsx prisma/seed.ts && tsx scripts/load-fixtures.ts && tsx scripts/compute.ts --from=2024-01-01 --replace && tsx scripts/seed-demo.ts --days=75",
-    "worker": "tsx worker/index.ts"
+    "worker": "tsx worker/index.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -36,6 +37,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24.13.3",
     "@types/pg": "^8.23.1",

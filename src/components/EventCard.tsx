@@ -1,5 +1,6 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import type { SitrepItem } from '@/lib/sitrep'
 import { WhyPanel } from './WhyPanel'
@@ -19,24 +20,33 @@ import {
  * what their names are worth; what they do not know is what happened while
  * they were gone.
  */
-export function EventCard({
-  item,
-  onAcknowledged,
-}: {
-  item: SitrepItem
-  onAcknowledged?: () => void
-}) {
+export function EventCard({ item }: { item: SitrepItem }) {
+  const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [dismissed, setDismissed] = useState(false)
 
+  /**
+   * Acknowledge, then re-render from the server.
+   *
+   * The card hides optimistically so the interaction feels immediate, but the
+   * refresh is what makes the screen agree with the cursor. Without it the UI
+   * and the server drifted: the card vanished locally while the next reload
+   * brought it straight back, because nothing had re-read the brief.
+   */
   async function markSeen() {
     setDismissed(true)
-    await fetch('/api/watch-state/mark-seen', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ symbols: [item.symbol], eventIds: item.eventIds }),
-    })
-    startTransition(() => onAcknowledged?.())
+    try {
+      const res = await fetch('/api/watch-state/mark-seen', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ symbols: [item.symbol], eventIds: item.eventIds }),
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      startTransition(() => router.refresh())
+    } catch {
+      // Put the card back rather than pretending the acknowledgement landed.
+      setDismissed(false)
+    }
   }
 
   if (dismissed && !pending) return null

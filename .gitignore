@@ -46,3 +46,8 @@ next-env.d.ts
 # Backfilled market-data fixtures are large; regenerate with scripts/backfill.ts
 # (a trimmed, committed subset is added separately for FIXTURE_MODE)
 /fixtures/bars/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
