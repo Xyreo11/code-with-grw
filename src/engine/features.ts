@@ -60,7 +60,8 @@ export function computeFeatures(
   const atr14 = atr(highs, lows, closes, 14)
   if (atr14 === null) return null
 
-  const window = (arr: number[], n: number) => arr.slice(Math.max(0, arr.length - n))
+  const window = <T,>(arr: T[], n: number): T[] =>
+    arr.slice(Math.max(0, arr.length - n))
 
   // Range extremes are measured over the sessions BEFORE today. Including
   // today's own bar would make its high the range high, so "closed above the
