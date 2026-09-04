@@ -242,6 +242,32 @@ describe('validateBars', () => {
     expect(rejected).toHaveLength(0)
   })
 
+  it('does not apply the session-move check across a gap in the series', () => {
+    // A trimmed fixture, or a symbol that stopped trading and resumed, leaves a
+    // gap. The price difference across it is not a session move and must not be
+    // judged as one - this exact bug rejected 9,008 valid rows when loading the
+    // committed fixtures, whose windows are deliberately non-contiguous.
+    const { valid, rejected } = validateBars([
+      bar({ date: '2020-03-31', open: 100, high: 102, low: 99, close: 100 }),
+      bar({ date: '2022-09-01', open: 300, high: 305, low: 295, close: 300 }),
+    ])
+
+    expect(valid).toHaveLength(2)
+    expect(rejected).toHaveLength(0)
+  })
+
+  it('still applies it across a weekend', () => {
+    // Friday to Monday is three calendar days but one session apart, so a 70%
+    // move there is still corrupt.
+    const { valid, rejected } = validateBars([
+      bar({ date: '2024-06-07', open: 100, high: 102, low: 99, close: 100 }),
+      bar({ date: '2024-06-10', open: 20, high: 21, low: 19, close: 20 }),
+    ])
+
+    expect(valid).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+  })
+
   it('never silently drops a row — every rejection carries a reason', () => {
     // A data outage that looks like a quiet market is the most dangerous
     // failure this product can have.

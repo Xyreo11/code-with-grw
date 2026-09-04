@@ -37,6 +37,15 @@ export interface ValidationResult {
  */
 const MAX_DAILY_MOVE = 0.6
 
+/**
+ * Largest calendar gap still treated as one session apart.
+ *
+ * Four days covers a weekend plus a public holiday. Anything wider is a gap in
+ * the series, not a session, so no statement about a single day's move can be
+ * made across it.
+ */
+const MAX_SESSION_GAP_DAYS = 4
+
 export function validateBars(bars: RawBar[]): ValidationResult {
   const valid: RawBar[] = []
   const rejected: ValidationReject[] = []
@@ -45,6 +54,7 @@ export function validateBars(bars: RawBar[]): ValidationResult {
   const sorted = [...bars].sort((a, b) => a.date.localeCompare(b.date))
 
   let previousClose: number | null = null
+  let previousDate: string | null = null
 
   for (const bar of sorted) {
     const reason = firstProblem(bar, seenDates)
@@ -53,20 +63,32 @@ export function validateBars(bars: RawBar[]): ValidationResult {
       continue
     }
 
-    if (previousClose !== null) {
-      const move = Math.abs(bar.close / previousClose - 1)
-      if (move > MAX_DAILY_MOVE) {
-        rejected.push({
-          bar,
-          reason: `implausible ${(move * 100).toFixed(0)}% session move — treating the row as corrupt`,
-        })
-        continue
+    // The move check only applies to CONSECUTIVE sessions. Across a gap it is
+    // not a session move at all, and treating it as one rejects perfectly good
+    // data: a trimmed fixture that jumps from March 2020 to September 2022, or
+    // a symbol that stopped trading and later resumed, would otherwise be
+    // discarded wholesale. This exact bug threw away 9,008 valid rows.
+    if (previousClose !== null && previousDate !== null) {
+      const gapDays =
+        (Date.parse(bar.date) - Date.parse(previousDate)) / 86_400_000
+      const consecutive = gapDays > 0 && gapDays <= MAX_SESSION_GAP_DAYS
+
+      if (consecutive) {
+        const move = Math.abs(bar.close / previousClose - 1)
+        if (move > MAX_DAILY_MOVE) {
+          rejected.push({
+            bar,
+            reason: `implausible ${(move * 100).toFixed(0)}% session move — treating the row as corrupt`,
+          })
+          continue
+        }
       }
     }
 
     seenDates.add(bar.date)
     valid.push(bar)
     previousClose = bar.close
+    previousDate = bar.date
   }
 
   return { valid, rejected }
