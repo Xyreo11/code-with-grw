@@ -10,6 +10,7 @@ import {
   scoreSignals,
   severityFor,
 } from '../scorer'
+import { squash } from '../math'
 import { fingerprintOf, isMateriallySimilar } from '../fingerprint'
 import type { CandidateEvent, ScoringContext, Signal } from '../types'
 
@@ -36,16 +37,17 @@ function sig(
 }
 
 describe('severity bands', () => {
-  it('maps scores to bands at the documented boundaries', () => {
+  it('maps scores to bands at the calibrated boundaries', () => {
+    // Boundaries come from docs/calibration.md, not from round numbers.
     expect(severityFor(95)).toBe('CRITICAL')
-    expect(severityFor(80)).toBe('CRITICAL')
-    expect(severityFor(79.9)).toBe('IMPORTANT')
-    expect(severityFor(60)).toBe('IMPORTANT')
-    expect(severityFor(59.9)).toBe('WATCH')
+    expect(severityFor(82)).toBe('CRITICAL')
+    expect(severityFor(81.9)).toBe('IMPORTANT')
+    expect(severityFor(64)).toBe('IMPORTANT')
+    expect(severityFor(63.9)).toBe('WATCH')
     expect(severityFor(40)).toBe('WATCH')
     expect(severityFor(39.9)).toBe('INFO')
-    expect(severityFor(20)).toBe('INFO')
-    expect(severityFor(19.9)).toBe('NOISE')
+    expect(severityFor(25)).toBe('INFO')
+    expect(severityFor(24.9)).toBe('NOISE')
     expect(severityFor(0)).toBe('NOISE')
   })
 
@@ -97,22 +99,41 @@ describe('scoreSignals', () => {
     expect(two).toBe(one)
   })
 
-  it('renormalises weights so a lone strong signal is not capped at its family weight', () => {
-    // Without renormalisation a lone price signal could never exceed 22 points
-    // (its family weight) and a 5-sigma move would be filed as INFO.
+  it('does not cap a lone strong signal at its bare family weight', () => {
+    // Weights are renormalised across families that reported, so a lone price
+    // signal is not punished for the silence of the others...
     const lone = scoreSignals([sig('m', 'price', 0.95)], ctx()).score
     expect(lone).toBeGreaterThan(FAMILY_WEIGHTS.price * 100)
-    expect(lone).toBeGreaterThan(80)
   })
 
-  it('ranks a corroborated move above an uncorroborated one', () => {
-    const alone = scoreSignals([sig('m', 'price', 0.7)], ctx()).score
+  it('requires corroboration before a lone signal can reach the brief', () => {
+    // ...but it does not get a free pass either. Calibration showed that full
+    // renormalisation made any detected event automatically clear WATCH -
+    // volume_spike and move_since_last_seen surfaced 99.5% of everything they
+    // detected. The coverage factor restores the product's own thesis: volume
+    // confirming a price move is worth more than either alone.
+    const lone = scoreSignals([sig('m', 'price', 0.9)], ctx())
     const corroborated = scoreSignals(
-      [sig('m', 'price', 0.7), sig('v', 'volume', 0.7), sig('r', 'relative', 0.7)],
+      [sig('m', 'price', 0.9), sig('v', 'volume', 0.9), sig('r', 'relative', 0.9)],
       ctx(),
-    ).score
-    // Equal normalised strength across more families should not score lower.
-    expect(corroborated).toBeGreaterThanOrEqual(alone - 0.1)
+    )
+
+    expect(corroborated.score).toBeGreaterThan(lone.score + 10)
+    expect(severityFor(lone.score)).not.toBe('CRITICAL')
+  })
+
+  it('names thin evidence as a reason the score is not higher', () => {
+    const lone = scoreSignals([sig('m', 'price', 0.9)], ctx())
+    const reason = lone.contributions.find((c) => c.key === 'corroboration')
+    expect(reason).toBeDefined()
+    expect(reason!.amount).toBeLessThan(1)
+    expect(reason!.label).toMatch(/nothing corroborates it/)
+  })
+
+  it('a bare ordinary move is never surfaced', () => {
+    // 2.5 sigma with nothing else is an ordinary day, and must not interrupt.
+    const bare = scoreSignals([sig('m', 'price', squash(2.5))], ctx())
+    expect(['INFO', 'NOISE']).toContain(bare.severity)
   })
 })
 
@@ -190,7 +211,10 @@ describe('context multipliers', () => {
 
     expect(a).toBe(b)
     expect(b).toBe(c)
-    expect(a).toBeCloseTo(70, 5)
+    // The absolute value also carries the coverage factor for the two families
+    // that reported, so it is below the bare 70 the mean alone would give.
+    expect(a).toBeGreaterThan(0)
+    expect(a).toBeLessThan(70)
   })
 })
 

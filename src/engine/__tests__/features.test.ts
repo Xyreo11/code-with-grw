@@ -8,6 +8,7 @@ import {
   quantile,
   robustZ,
   squash,
+  SQUASH_DIVISOR,
   stdev,
   winsorize,
 } from '../math'
@@ -48,11 +49,21 @@ describe('math primitives', () => {
 
   it('squash saturates so no single feature can dominate', () => {
     expect(squash(0)).toBe(0)
-    expect(squash(3)).toBeCloseTo(Math.tanh(1), 10)
+    expect(squash(3)).toBeCloseTo(Math.tanh(3 / SQUASH_DIVISOR), 10)
     expect(Math.abs(squash(50))).toBeLessThan(1)
     expect(squash(12)).toBeGreaterThan(squash(6))
     // ...but the marginal gain past 6 sigma is tiny.
-    expect(squash(12) - squash(6)).toBeLessThan(0.05)
+    expect(squash(12) - squash(6)).toBeLessThan(0.1)
+  })
+
+  it('maps ordinary volatility to ordinary scores', () => {
+    // The calibrated shape. At an earlier divisor of 3, a 2-sigma move - which
+    // happens on ~5% of sessions - scored 0.58 and read as IMPORTANT, producing
+    // 26% of all events at CRITICAL. See docs/calibration.md.
+    expect(squash(2)).toBeCloseTo(0.46, 2)
+    expect(squash(3)).toBeCloseTo(0.64, 2)
+    expect(squash(4)).toBeCloseTo(0.76, 2)
+    expect(squash(6)).toBeCloseTo(0.91, 2)
   })
 
   it('winsorize clamps tails into the quantile range', () => {

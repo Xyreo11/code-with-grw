@@ -35,9 +35,9 @@ export interface DetectorInput {
 // Thresholds are calibrated (see scripts/calibrate.ts), not guessed. They are
 // named constants so the calibration report can reference them directly.
 export const THRESHOLDS = {
-  moveSigmas: 2.0,
-  rvol: 2.0,
-  sectorDivergenceZ: 1.5,
+  moveSigmas: 2.5,
+  rvol: 2.5,
+  sectorDivergenceZ: 2.0,
   /**
    * A divergence must also be economically real, not merely statistically
    * significant. When a name tracks its sector very closely the residual
@@ -47,7 +47,7 @@ export const THRESHOLDS = {
    */
   sectorDivergenceMinVolFraction: 0.5,
   rangeBreakAtr: 0.5,
-  volRegimeRatio: 1.75,
+  volRegimeRatio: 2.0,
   earningsHours: 48,
 } as const
 
@@ -240,7 +240,9 @@ export function detectRangeBreak(input: DetectorInput): CandidateEvent | null {
           `Closed ${distanceAtr.toFixed(1)} ATR ${word} the ${window}-day range`,
           'price',
           distanceAtr * direction,
-          squash(distanceAtr * direction * 1.5),
+          // ATR units are already comparable across instruments, so they go
+          // through the same squash as a sigma with no extra amplification.
+          squash(distanceAtr * direction),
         ),
       ],
     }

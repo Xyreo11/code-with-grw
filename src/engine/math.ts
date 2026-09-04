@@ -100,12 +100,24 @@ export function winsorize(xs: number[], qLow = 0.005, qHigh = 0.995): number[] {
  *
  * Deliberately saturating: a 12-sigma print and a 6-sigma print both mean "off
  * the charts", and letting one feature run to +12 would let it swamp every
- * other signal in a weighted sum. `z/3` puts a 3-sigma move at tanh(1) ~ 0.76,
- * so the interesting range is well spread rather than pinned at the asymptote.
+ * other signal in a weighted sum.
+ *
+ * The divisor is calibrated, not chosen for tidiness. At `z/3` a 2-sigma move —
+ * which happens on roughly 5% of sessions — scored 58 points and landed near
+ * IMPORTANT, producing 5.88 surfaced events per name per month against a target
+ * of 2-4, and 26% of all events rated CRITICAL. `z/4` spreads the curve so
+ * ordinary volatility reads as ordinary:
+ *
+ *   2 sigma -> 0.46    4 sigma -> 0.76
+ *   3 sigma -> 0.64    6 sigma -> 0.91
+ *
+ * See docs/calibration.md for the measured effect.
  */
+export const SQUASH_DIVISOR = 4
+
 export function squash(z: number): number {
   if (!Number.isFinite(z)) return 0
-  return Math.tanh(z / 3)
+  return Math.tanh(z / SQUASH_DIVISOR)
 }
 
 export function clamp(x: number, lo: number, hi: number): number {

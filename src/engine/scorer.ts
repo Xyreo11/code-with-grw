@@ -81,11 +81,19 @@ const HALF_LIFE_DAYS: Record<string, number> = {
   earnings_upcoming: Infinity,
 }
 
+/**
+ * Severity bands, calibrated against real history (docs/calibration.md).
+ *
+ * The first cut used 80/60/40/20 and rated 26% of all detected events CRITICAL,
+ * which makes the word meaningless. These bands are set so that a lone move has
+ * to be genuinely extreme — roughly 6 sigma, or 4 sigma corroborated by volume
+ * and a catalyst — before it can interrupt someone as CRITICAL.
+ */
 export const SEVERITY_BANDS: Array<{ min: number; severity: Severity }> = [
-  { min: 80, severity: 'CRITICAL' },
-  { min: 60, severity: 'IMPORTANT' },
+  { min: 82, severity: 'CRITICAL' },
+  { min: 64, severity: 'IMPORTANT' },
   { min: 40, severity: 'WATCH' },
-  { min: 20, severity: 'INFO' },
+  { min: 25, severity: 'INFO' },
   { min: -Infinity, severity: 'NOISE' },
 ]
 
@@ -103,13 +111,42 @@ export interface ScoreResult {
 }
 
 /**
+ * How hard thin evidence is penalised. Calibrated; see the note below.
+ *
+ * 0 would ignore corroboration entirely (a lone signal scores as high as five
+ * agreeing ones); 1 would make a lone signal almost unscoreable regardless of
+ * how extreme it is.
+ */
+export const COVERAGE_EXPONENT = 0.25
+
+/**
  * Score a set of signals.
  *
- * Weights are renormalised across the families actually present. Without this a
- * lone 5-sigma price move could never exceed 22 points (its family weight) and
- * would be filed as INFO, which is plainly wrong — the absence of a volume
- * signal is not evidence against a move that large. Renormalising asks "given
- * what we can observe, how notable is this?" rather than penalising silence.
+ * Two things are combined, and keeping them separate is the point:
+ *
+ *   strength  the weighted mean of the families that DID report, so a lone
+ *             extreme move is not punished for the silence of other families
+ *   coverage  how much of the total weight reported at all, so corroboration
+ *             counts for something
+ *
+ *     score = 100 x strength x coverage^COVERAGE_EXPONENT
+ *
+ * An earlier version renormalised fully (coverage ignored). That made the score
+ * measure only "how strong is the strongest evidence", which meant any detected
+ * event automatically cleared WATCH — calibration showed `volume_spike` and
+ * `move_since_last_seen` surfacing 99.5% of everything they detected, with no
+ * gradation whatever, and 26% of all events rated CRITICAL.
+ *
+ * It also silently discarded the product's own thesis: that volume confirming a
+ * price move is worth more than either alone. Coverage restores it. The
+ * resulting ladder, at strength 0.9:
+ *
+ *     price only (cov 0.22)            -> 62   WATCH
+ *     price + volume + relative (0.60) -> 79   IMPORTANT
+ *     all five families (1.00)         -> 90   CRITICAL
+ *
+ * and a bare 2.5-sigma move with nothing corroborating it lands at 38 — INFO,
+ * never surfaced. Which is correct: on its own, it is an ordinary day.
  */
 export function scoreSignals(
   signals: Signal[],
@@ -138,6 +175,15 @@ export function scoreSignals(
     (family) => FAMILY_WEIGHTS[family] * (tilt[family] ?? 1),
   )
   const weightSum = rawWeights.reduce((a, b) => a + b, 0)
+
+  // Coverage is measured against the UNTILTED total, so an intent tilt changes
+  // emphasis without inflating how well-corroborated an event looks.
+  const totalPossibleWeight = Object.values(FAMILY_WEIGHTS).reduce(
+    (a, b) => a + b,
+    0,
+  )
+  const coverage = present.reduce((a, f) => a + FAMILY_WEIGHTS[f], 0) / totalPossibleWeight
+  const coverageFactor = Math.pow(coverage, COVERAGE_EXPONENT)
 
   let subtotal = 0
   present.forEach((family, i) => {
@@ -174,6 +220,19 @@ export function scoreSignals(
       amount: round2(amount),
     })
   }
+
+  // Applied as a visible multiplier rather than folded into the additive
+  // points, so the Why panel can name thin evidence as a reason the score is
+  // not higher instead of leaving an unexplained gap in the arithmetic.
+  addMultiplier(
+    'corroboration',
+    present.length === 1
+      ? 'Only one kind of signal fired — nothing corroborates it'
+      : present.length < 5
+        ? `Only ${present.length} of 5 signal families fired`
+        : 'Every signal family agrees',
+    coverageFactor,
+  )
 
   if (ctx.hasCatalyst) {
     // A move that coincides with a scheduled catalyst is worth more than either
