@@ -5,6 +5,7 @@ import {
   QUEUE_NAMES,
   redisConnection,
   getComputeQueue,
+  getIngestQueue,
   type ComputeJob,
   type IngestJob,
 } from '../src/lib/queue'
@@ -13,6 +14,7 @@ import { TwelveDataSource } from '../src/lib/sources/twelvedata'
 import { TiingoSource } from '../src/lib/sources/tiingo'
 import { validateBars } from '../src/lib/ingest/validate'
 import { reconcileSeries } from '../src/lib/ingest/reconcile'
+import { FixtureSource, fixtureMode } from '../src/lib/sources/fixture'
 import type { RawBar } from '../src/lib/sources/types'
 
 /**
@@ -176,6 +178,20 @@ function sources(): Array<
     [string, number, (s: string, from?: string, to?: string) => Promise<RawBar[]>]
   > = []
 
+  // FIXTURE_MODE is a hard gate, checked before the keys are even read.
+  //
+  // It used to be documented and unimplemented: with keys present the worker
+  // made live calls regardless, and clone-and-run worked only because a keyless
+  // checkout produced an empty source list. A promise of "no network" that
+  // depends on the absence of credentials is not a promise.
+  if (fixtureMode()) {
+    const td = new FixtureSource('twelvedata', 1)
+    const tg = new FixtureSource('tiingo', 2)
+    out.push(['twelvedata', 1, (sym, from, to) => td.fetchDailyBars(sym, { from, to })])
+    out.push(['tiingo', 2, (sym, from, to) => tg.fetchDailyBars(sym, { from, to })])
+    return out
+  }
+
   if (process.env.TWELVE_DATA_API_KEY) {
     const td = new TwelveDataSource(process.env.TWELVE_DATA_API_KEY)
     out.push(['twelvedata', 1, (s, from, to) => td.fetchDailyBars(s, { from, to })])
@@ -196,11 +212,16 @@ async function handleCompute(job: Job<ComputeJob>) {
 
 /**
  * BullMQ forbids ":" in a custom job id, so natural keys are hyphen-separated.
- * Hourly granularity collapses repeated drains within the same hour into one
- * recompute.
+ *
+ * Deliberately unique per settled batch rather than bucketed by hour. Hourly
+ * ids looked like sensible deduplication and were in fact a correctness bug:
+ * the first (premature) compute of an hour claimed the id, so the real
+ * follow-up recompute after the batch finished was silently swallowed as a
+ * duplicate. Debouncing is what prevents redundant computes now; the id only
+ * has to be unique.
  */
 function computeJobId(): string {
-  return `compute-${new Date().toISOString().slice(0, 13).replace(/[:T-]/g, '')}`
+  return `compute-${Date.now()}`
 }
 
 async function main() {
@@ -233,43 +254,79 @@ async function main() {
     })
   }
 
-  // Only recompute if ingestion actually did something. BullMQ emits `drained`
-  // whenever the queue empties, including immediately at startup on an idle
-  // queue, so enqueueing unconditionally would kick off a full recompute every
-  // time the worker restarts.
+  // Recompute once, after the whole batch has actually landed.
+  //
+  // `drained` is the obvious hook and it is the wrong one. BullMQ emits it
+  // whenever the WAIT list empties, which happens repeatedly mid-batch while
+  // jobs are still active - a 26-symbol run fired it after 9. Compute then read
+  // a two-thirds-updated universe, which is exactly the thing the batching
+  // exists to prevent, and the hourly job id turned the correct follow-up into
+  // a no-op duplicate.
+  //
+  // So: debounce on completion, then verify the queue is genuinely empty before
+  // enqueueing. Features for one instrument depend on the benchmark and sector
+  // proxies, so a partial universe is not merely stale, it is wrong.
+  const SETTLE_MS = 3_000
   let ingestedSinceCompute = 0
+  let settleTimer: NodeJS.Timeout | null = null
+
+  async function scheduleCompute() {
+    if (settleTimer) clearTimeout(settleTimer)
+
+    settleTimer = setTimeout(() => {
+      settleTimer = null
+      void (async () => {
+        // An unhandled rejection in a timer takes the whole process down - which
+        // is what happened here on the first run, from the old `drained`
+        // handler. A failed follow-up must not kill a healthy worker.
+        try {
+          const queue = getIngestQueue()
+          const [waiting, active, delayed] = await Promise.all([
+            queue.getWaitingCount(),
+            queue.getActiveCount(),
+            queue.getDelayedCount(),
+          ])
+          if (waiting + active + delayed > 0) {
+            // Still working. Re-arm rather than computing against a partial set.
+            void scheduleCompute()
+            return
+          }
+          if (ingestedSinceCompute === 0) return
+
+          const count = ingestedSinceCompute
+          ingestedSinceCompute = 0
+
+          console.log(`[ingest] batch settled: ${count} symbols, enqueueing compute`)
+          await getComputeQueue().add(
+            'compute-all',
+            { from: '2024-01-01', replace: true },
+            { jobId: computeJobId() },
+          )
+        } catch (e) {
+          console.error(
+            `[ingest] could not enqueue compute: ${(e as Error).message}`,
+          )
+        }
+      })()
+    }, SETTLE_MS)
+  }
+
   ingestWorker.on('completed', () => {
     ingestedSinceCompute++
-  })
-
-  // When a batch of ingest jobs drains, recompute ONCE rather than after every
-  // symbol: features for one instrument depend on the benchmark and sector
-  // proxies, so computing mid-batch would read a half-updated universe.
-  ingestWorker.on('drained', async () => {
-    if (ingestedSinceCompute === 0) return
-    const count = ingestedSinceCompute
-    ingestedSinceCompute = 0
-
-    // An unhandled rejection in an event handler takes the whole process down -
-    // which is exactly what happened here on the first run. A failed follow-up
-    // enqueue must not kill a worker that is otherwise healthy.
-    try {
-      console.log(`[ingest] drained after ${count} symbols, enqueueing compute`)
-      await getComputeQueue().add(
-        'compute-all',
-        { from: '2024-01-01', replace: true },
-        { jobId: computeJobId() },
-      )
-    } catch (e) {
-      console.error(`[ingest] could not enqueue compute: ${(e as Error).message}`)
-    }
+    void scheduleCompute()
   })
 
   console.log('worker up')
+  console.log(
+    fixtureMode()
+      ? '  sources  FIXTURE MODE - committed history, no network'
+      : `  sources  live (${sources().map(([id]) => id).join(', ') || 'none configured'})`,
+  )
   console.log(`  ingest   concurrency ${CONCURRENCY.ingest}`)
   console.log(`  compute  concurrency ${CONCURRENCY.compute}`)
 
   const shutdown = async () => {
+    if (settleTimer) clearTimeout(settleTimer)
     console.log('\nshutting down')
     await Promise.all([ingestWorker.close(), computeWorker.close()])
     await db.$disconnect()

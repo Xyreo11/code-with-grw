@@ -4,7 +4,7 @@
 //  - `Event` is APPEND-ONLY. Corrections and escalations are new rows linked by
 //    `supersedesId`, never an UPDATE. That is what keeps the timeline truthful
 //    and lets us re-score history under a new `scorerV` without losing the past.
-//  - Market data (Instrument/DailyBar/FeatureDaily/Event/Theme) is shared global
+//  - Market data (Instrument/DailyBar/Event/Theme) is shared global
 //    state computed ONCE per instrument. Per-user rows are only cursors and
 //    read-state. Adding users adds fan-out, never analytical work.
 //  - `UserWatchState` is THE CURSOR: the per-(user,instrument) pointer into the
@@ -119,7 +119,6 @@ model Instrument {
   proxyFor  Instrument[] @relation("SectorProxy")
 
   bars           DailyBar[]
-  features       FeatureDaily[]
   events         Event[]
   watchlistItems WatchlistItem[]
   watchState     UserWatchState[]
@@ -187,28 +186,6 @@ model EarningsEvent {
   @@unique([instrumentId, reportDate])
   @@index([reportDate])
   @@map("earnings_events")
-}
-
-model FeatureDaily {
-  instrumentId String
-  barDate      DateTime @db.Date
-  // Full feature vector { f1..fN + intermediates }. Stored so an event can be
-  // explained later without recomputing, and so calibration can replay it.
-  vec          Json
-  atr14        Float?
-  rv10         Float?
-  rv60         Float?
-  betaSpy      Float?
-  betaSector   Float?
-  residSpy     Float?
-  residSector  Float?
-  engineV      String
-  computedAt   DateTime @default(now())
-
-  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
-
-  @@id([instrumentId, barDate])
-  @@map("features_daily")
 }
 
 // ---------------------------------------------------------------- intelligence
