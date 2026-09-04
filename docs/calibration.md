@@ -2,11 +2,11 @@
 
 Generated 2026-09-04 · engine `v1` · scorer `v1`
 
-Window: **2023-01-01 → present** · 17 equities · 2602 events across 1758 active instrument-days
+Window: **2023-01-01 → present** · 17 equities · 2591 events across 1750 active instrument-days
 
 ## The number being tuned
 
-**1.06 surfaced instrument-days per name per month** (target 1–2) — within budget
+**1.09 surfaced instrument-days per name per month** (target 1–2) — within budget
 
 For the reference user (17 names, ~8.7 visits/month) that is **2.1 items in a typical brief**, against an attention budget of 5.
 
@@ -23,30 +23,30 @@ opening, regardless of how correct each alert was.
 
 | Severity | Instrument-days | Share |
 |---|---:|---:|
-| CRITICAL | 21 | 1.2% |
-| IMPORTANT | 165 | 9.4% |
-| WATCH | 607 | 34.5% |
-| INFO | 418 | 23.8% |
-| NOISE | 547 | 31.1% |
+| CRITICAL | 28 | 1.6% |
+| IMPORTANT | 173 | 9.9% |
+| WATCH | 614 | 35.1% |
+| INFO | 389 | 22.2% |
+| NOISE | 546 | 31.2% |
 
 ## By detector
 
 | Detector | Fired | On a surfaced day | Share |
 |---|---:|---:|---:|
-| `range_break` | 888 | 281 | 31.6% |
-| `sector_divergence` | 776 | 516 | 66.5% |
+| `range_break` | 888 | 285 | 32.1% |
+| `sector_divergence` | 765 | 528 | 69.0% |
 | `volume_spike` | 438 | 430 | 98.2% |
-| `move_since_last_seen` | 370 | 334 | 90.3% |
+| `move_since_last_seen` | 370 | 343 | 92.7% |
 | `vol_regime_shift` | 130 | 33 | 25.4% |
 
 ## Follow-through (precision proxy)
 
 Share of surfaced events followed by a ≥1.5σ move within 3 sessions:
 
-- **surfaced events: 19.9%** (158/792)
+- **surfaced events: 19.9%** (162/814)
 - every session, as a baseline: 15.3% (2385/15606)
 
-Lift over "look every day": **1.31×**
+Lift over "look every day": **1.30×**
 
 This is a proxy, not ground truth — nobody labelled these events, and
 "did the user care?" cannot be measured before the product has users.
@@ -58,23 +58,23 @@ at or below 1.0 would mean the engine is no better than looking daily.
 
 | Symbol | Events | Active days | Surfaced days | Per month |
 |---|---:|---:|---:|---:|
-| AVGO | 168 | 108 | 65 | 1.48 |
-| AAPL | 163 | 109 | 60 | 1.36 |
+| AVGO | 167 | 108 | 64 | 1.45 |
 | ORCL | 205 | 133 | 60 | 1.36 |
+| AAPL | 162 | 108 | 59 | 1.34 |
 | QCOM | 164 | 111 | 57 | 1.30 |
-| INTC | 165 | 104 | 54 | 1.23 |
+| INTC | 164 | 104 | 54 | 1.23 |
 | ADBE | 168 | 110 | 54 | 1.23 |
 | PLTR | 160 | 102 | 51 | 1.16 |
+| NFLX | 137 | 88 | 50 | 1.14 |
 | CRM | 165 | 108 | 49 | 1.11 |
-| NFLX | 137 | 88 | 48 | 1.09 |
-| MU | 152 | 108 | 45 | 1.02 |
-| AMD | 152 | 106 | 43 | 0.98 |
+| META | 149 | 104 | 45 | 1.02 |
+| MU | 151 | 107 | 44 | 1.00 |
+| AMD | 153 | 106 | 43 | 0.98 |
+| GOOGL | 139 | 94 | 41 | 0.93 |
 | MSFT | 138 | 99 | 40 | 0.91 |
-| META | 149 | 104 | 40 | 0.91 |
-| AMZN | 123 | 80 | 34 | 0.77 |
+| AMZN | 122 | 79 | 38 | 0.86 |
 | NVDA | 120 | 93 | 33 | 0.75 |
-| GOOGL | 142 | 97 | 32 | 0.73 |
-| TSLA | 131 | 98 | 28 | 0.64 |
+| TSLA | 127 | 96 | 33 | 0.75 |
 
 ## Parameters in force
 

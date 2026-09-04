@@ -144,6 +144,8 @@ Those last two are different things and the UI says so differently. Collapsing t
 
 Volume disagreement is recorded but never marks a bar unconfirmed: vendors legitimately differ on consolidated vs primary-listing volume, and flagging every bar would train people to ignore the badge.
 
+Across the committed dataset that leaves **8 genuine conflicts in 33,616 bars** (0.02%), and 3 bars where the two providers disagree enough to be marked unconfirmed.
+
 **Reconciliation initially reported 68,733 conflicts across 49,714 bars.** It was not finding data problems — it was comparing different units. Twelve Data's close is split-adjusted; Tiingo's is raw; Tiingo's `adjClose` is split *and* dividend adjusted. Every name that had ever split showed ~90% "disagreement" across its pre-split history. Reconstructing Tiingo onto Twelve Data's exact basis using its per-row `splitFactor` brought it to **20 conflicts**.
 
 > A reconciliation system that does not first establish a common unit will confidently report unit mismatches as data quality problems — which is worse than not reconciling at all.
@@ -232,7 +234,7 @@ Named because they were decisions, not oversights.
 
 ## Known limitations
 
-- **Five symbols are single-source.** Tiingo's free tier is 50 requests/hour and the backfill exhausted it. GOOGL, META, NFLX, AMZN and TSLA sit at 0.9 confidence and show a `SINGLE SOURCE` badge. Re-running `npm run backfill -- --reuse-primary --reuse-secondary` in a fresh hour fixes it. Degrading visibly rather than silently is the intended behaviour.
+- **Backfilling is rate-limited.** Tiingo's free tier allows 50 requests/hour, so a cold backfill of 26 symbols needs two passes an hour apart. `npm run backfill -- --reuse-primary --reuse-secondary` replays whatever is already captured and only fetches what is missing, so re-running costs nothing. During the first pass five symbols were single-source and correctly displayed a `SINGLE SOURCE` badge — degrading visibly rather than silently is the intended behaviour, and the committed fixtures now have full two-source coverage.
 - **Daily bars only.** No intraday, so "since you last checked" resolves to trading days.
 - **Split adjustment is trusted to the provider.** The validator is a gross-corruption backstop, not a corporate-actions engine.
 - **Universe is fixed at 26 symbols.** Adding arbitrary tickers means backfilling them first.
