@@ -60,6 +60,21 @@ export function handler(
   }
 }
 
+/**
+ * Guard for machine-called routes.
+ *
+ * A scheduler has no session, so these are protected by a shared secret in the
+ * Authorization header instead. Fails closed: an unset CRON_SECRET rejects
+ * every request rather than allowing all of them.
+ */
+export function requireCronSecret(req: Request): void {
+  const expected = process.env.CRON_SECRET
+  if (!expected) throw new Error('CRON_SECRET is not configured')
+
+  const provided = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+  if (provided !== expected) throw new Error('Invalid cron secret')
+}
+
 export async function parseBody<T extends z.ZodTypeAny>(
   req: Request,
   schema: T,

@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { currentUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { ENGINE_VERSION, SCORER_VERSION } from '@/engine/types'
+import { queueDepths } from '@/lib/queue'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,7 @@ export default async function PipelinePage() {
       db.dailyBar.count(),
     ])
 
+  const queues = await queueDepths()
   const unconfirmedBars = await db.dailyBar.count({ where: { confirmed: false } })
   const singleSource = await db.dailyBar.count({ where: { confidence: { lt: 1 } } })
 
@@ -144,6 +146,57 @@ export default async function PipelinePage() {
             </tbody>
           </table>
         </div>
+      </Section>
+
+      <Section title="QUEUES">
+        {!queues.reachable ? (
+          <p className="text-sm text-[color:var(--ink-3)]">
+            Redis is not reachable. The queue accelerates ingestion but is not on
+            the read path, so the brief still renders — run{' '}
+            <code className="font-mono text-xs">docker compose up -d redis</code>{' '}
+            and <code className="font-mono text-xs">npm run worker</code> to
+            enable background ingestion.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="font-mono text-[10px] tracking-wider text-[color:var(--ink-3)]">
+                  <th className="pb-2 pr-4">QUEUE</th>
+                  <th className="pb-2 pr-4">WAITING</th>
+                  <th className="pb-2 pr-4">ACTIVE</th>
+                  <th className="pb-2 pr-4">DONE</th>
+                  <th className="pb-2 pr-4">FAILED</th>
+                  <th className="pb-2">DELAYED</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(
+                  [
+                    ['ingest', queues.ingest],
+                    ['compute', queues.compute],
+                  ] as const
+                ).map(([name, counts]) => (
+                  <tr key={name} className="border-t border-[color:var(--border)]">
+                    <td className="py-2 pr-4 font-mono">{name}</td>
+                    <td className="tabular py-2 pr-4">{counts?.waiting ?? 0}</td>
+                    <td className="tabular py-2 pr-4">{counts?.active ?? 0}</td>
+                    <td className="tabular py-2 pr-4">{counts?.completed ?? 0}</td>
+                    <td
+                      className="tabular py-2 pr-4"
+                      style={{
+                        color: (counts?.failed ?? 0) > 0 ? 'var(--down)' : undefined,
+                      }}
+                    >
+                      {counts?.failed ?? 0}
+                    </td>
+                    <td className="tabular py-2">{counts?.delayed ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Section>
 
       <Section title="RECENT INGEST RUNS">

@@ -34,6 +34,22 @@ npm test              # 130 tests, engine + ingestion
 npm run calibrate     # replay history, rewrite docs/calibration.md
 ```
 
+### Background ingestion (optional, needs API keys)
+
+```bash
+npm run worker                                    # consumes the queues
+curl -X POST localhost:3000/api/cron/ingest      -H "authorization: Bearer $CRON_SECRET"      # enqueues all 26 symbols
+```
+
+The route only **enqueues** — it returns in milliseconds regardless of how slow
+or rate-limited the upstream feeds are, and never does provider I/O on a
+request thread. The worker paces itself against the free tiers (Twelve Data
+8/min, Tiingo 50/hour), retries with a long backoff because the real failure is
+an hourly quota rather than a transient blip, and when the batch drains it
+enqueues **one** recompute — not one per symbol, because a name's features
+depend on the benchmark and sector proxies and computing mid-batch would read a
+half-updated universe.
+
 ---
 
 ## The problem with watchlists
@@ -167,13 +183,16 @@ Names flagged but cut by the attention budget are reported separately from names
 ## Architecture
 
 ```
-                    ┌──────────────┐   ┌──────────────┐
-   Twelve Data ────▶│   validate   │──▶│  reconcile   │──┐
+   cron ──▶ POST /api/cron/ingest ──▶ [ BullMQ: ingest ] ──▶ worker
+                                                              │
+                    ┌──────────────┐   ┌──────────────┐       │
+   Twelve Data ────▶│   validate   │──▶│  reconcile   │──┐◀───┘
    Tiingo      ────▶│              │   │              │  │
    Finnhub (cal)    └──────────────┘   └──────────────┘  │
                                                           ▼
    ┌───────────────────────────────────────────────┐   Postgres
    │  COMPUTE — once per instrument, for everybody │◀──  bars
+   │  [ BullMQ: compute ] — one job per drain      │
    │  features → detectors → scorer → themes       │──▶  events
    └───────────────────────────────────────────────┘     themes
                                                           │
@@ -189,7 +208,9 @@ Names flagged but cut by the attention budget are reported separately from names
 
 The engine (`src/engine/`) is **pure**: no database, no network, no clock. That is what makes it unit-testable against synthetic fixtures, replayable over history, and safe to version-stamp. Calibration, live compute and scenario replay all run the *same* code path — if calibration used a different one, its tuned thresholds would describe a system that was never shipped.
 
-**Stack:** Next.js 16 (App Router, SSR) · TypeScript · Postgres 16 + Prisma 7 · Tailwind 4 · Vitest · Docker Compose.
+**Stack:** Next.js 16 (App Router, SSR) · TypeScript · Postgres 16 + Prisma 7 · BullMQ on Redis · Tailwind 4 · Vitest · Docker Compose.
+
+The web process only enqueues; the worker does all provider I/O and compute. Redis is **not** on the read path — if it is down the brief still renders and the ops page says so, because a queue that can take the product offline is worse than no queue.
 
 ---
 
@@ -219,8 +240,6 @@ Several tests exist specifically to pin down bugs that were written and then cau
 ## Deliberately not built
 
 Named because they were decisions, not oversights.
-
-**Redis/BullMQ worker.** The queue seam exists conceptually — compute is idempotent and instrument-keyed — but running a broker for 26 instruments is theatre. Redis is in the compose file for when fan-out actually needs it.
 
 **Streaming / real-time.** The product is about *returning later*, not watching ticks. SSE would make the demo busier and the thesis weaker.
 

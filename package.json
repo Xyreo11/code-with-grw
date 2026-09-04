@@ -16,7 +16,8 @@
     "seed:demo": "tsx scripts/seed-demo.ts",
     "fixtures:load": "tsx scripts/load-fixtures.ts",
     "fixtures:trim": "tsx scripts/trim-fixtures.ts",
-    "demo:reset": "tsx prisma/seed.ts && tsx scripts/load-fixtures.ts && tsx scripts/compute.ts --from=2024-01-01 --replace && tsx scripts/seed-demo.ts --days=75"
+    "demo:reset": "tsx prisma/seed.ts && tsx scripts/load-fixtures.ts && tsx scripts/compute.ts --from=2024-01-01 --replace && tsx scripts/seed-demo.ts --days=75",
+    "worker": "tsx worker/index.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

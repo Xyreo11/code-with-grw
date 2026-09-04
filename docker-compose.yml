@@ -33,6 +33,10 @@ services:
       timeout: 3s
       retries: 10
 
+# The web app and worker run on the host (npm run dev / npm run worker) rather
+# than in compose: this is a local-only project, and keeping them out of the
+# image means no rebuild between edits. Compose owns the stateful services only.
+
 volumes:
   sitrep_pgdata:
   sitrep_redisdata:
