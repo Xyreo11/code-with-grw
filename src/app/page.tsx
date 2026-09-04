@@ -1,69 +1,165 @@
-import Image from "next/image";
+import { redirect } from 'next/navigation'
+import { currentUser } from '@/lib/auth'
+import { buildSitrep } from '@/lib/sitrep'
+import { EventCard } from '@/components/EventCard'
+import { StoryBlock } from '@/components/StoryBlock'
+import { ThemeCard } from '@/components/ThemeCard'
+import { AttentionBudget } from '@/components/AttentionBudget'
+import { MarkAllSeen } from '@/components/MarkAllSeen'
 
-export default function Home() {
+export const dynamic = 'force-dynamic'
+
+/**
+ * THE SITREP.
+ *
+ * Server-rendered on purpose: the whole product is about the moment you come
+ * back, so the answer should already be on the page when it paints rather than
+ * arriving after a spinner.
+ */
+export default async function Page() {
+  const user = await currentUser()
+  if (!user) redirect('/login')
+
+  const sitrep = await buildSitrep(user.id)
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="mx-auto w-full max-w-3xl px-5 py-10">
+      <Header sitrep={sitrep} />
+
+      {sitrep.quiet ? (
+        <QuietState watchlistSize={sitrep.watchlistSize} />
+      ) : (
+        <>
+          <section className="mt-6 flex flex-col gap-3">
+            {sitrep.items.map((item) => (
+              <EventCard key={item.symbol} item={item} />
+            ))}
+          </section>
+
+          <CollapseLine
+            belowBudget={sitrep.belowBudget}
+            withinNormalRange={sitrep.withinNormalRange}
+          />
+        </>
+      )}
+
+      <div className="mt-8 flex flex-col gap-4">
+        <StoryBlock narrative={sitrep.narrative} />
+
+        {sitrep.themes.map((theme) => (
+          <ThemeCard key={theme.id} theme={theme} />
+        ))}
+
+        <AttentionBudget
+          budget={sitrep.budget}
+          watchlistSize={sitrep.watchlistSize}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+      </div>
+
+      <Footer sitrep={sitrep} />
+    </main>
+  )
+}
+
+function Header({
+  sitrep,
+}: {
+  sitrep: Awaited<ReturnType<typeof buildSitrep>>
+}) {
+  const hours = sitrep.absenceHours
+  const away =
+    hours === null
+      ? null
+      : hours < 36
+        ? `${Math.round(hours)} hours ago`
+        : `${Math.round(hours / 24)} days ago`
+
+  return (
+    <header>
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="font-mono text-[11px] tracking-[0.2em] text-[color:var(--accent-ink)]">
+          SITREP
+        </span>
+        <span className="font-mono text-[10px] tracking-wide text-[color:var(--ink-3)]">
+          {sitrep.asOf
+            ? `data as of ${new Date(sitrep.asOf).toLocaleDateString()}`
+            : 'no data yet'}
+        </span>
+      </div>
+
+      <h1 className="mt-6 text-2xl font-semibold tracking-tight">
+        Good morning, {sitrep.displayName}.
+      </h1>
+
+      <p className="mt-4 font-mono text-[11px] tracking-wider text-[color:var(--ink-3)]">
+        {away
+          ? `HERE'S WHAT CHANGED SINCE YOU LAST CHECKED — ${away.toUpperCase()}`
+          : "HERE'S WHAT CHANGED SINCE YOU LAST CHECKED"}
+      </p>
+
+      <div className="mt-2 flex items-center justify-between gap-4">
+        <p className="text-lg text-[color:var(--ink-2)]">
+          {sitrep.items.length === 0
+            ? 'Nothing needs your attention.'
+            : `${sitrep.items.length} thing${sitrep.items.length === 1 ? '' : 's'} need${sitrep.items.length === 1 ? 's' : ''} your attention.`}
+        </p>
+        {sitrep.items.length > 0 && <MarkAllSeen />}
+      </div>
+    </header>
+  )
+}
+
+function CollapseLine({
+  belowBudget,
+  withinNormalRange,
+}: {
+  belowBudget: number
+  withinNormalRange: number
+}) {
+  return (
+    <p className="mt-4 text-sm text-[color:var(--ink-3)]">
+      {belowBudget > 0 && (
+        <>
+          <span className="text-[color:var(--ink-2)]">{belowBudget} more</span>{' '}
+          {belowBudget === 1 ? 'was' : 'were'} flagged but fell below your
+          attention budget.{' '}
+        </>
+      )}
+      {withinNormalRange} instrument{withinNormalRange === 1 ? '' : 's'} moved
+      within {withinNormalRange === 1 ? 'its' : 'their'} normal range.
+    </p>
+  )
+}
+
+function QuietState({ watchlistSize }: { watchlistSize: number }) {
+  return (
+    <section className="mt-6 rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] p-8 text-center">
+      <p className="font-mono text-[11px] tracking-wider text-[color:var(--ink-3)]">
+        YOUR MARKET IS QUIET
+      </p>
+      <p className="mt-3 text-lg text-[color:var(--ink-2)]">
+        Nothing requires your attention.
+      </p>
+      <p className="mt-2 text-sm text-[color:var(--ink-3)]">
+        All {watchlistSize} names moved within their normal range. This is a
+        real answer, not an empty screen.
+      </p>
+    </section>
+  )
+}
+
+function Footer({
+  sitrep,
+}: {
+  sitrep: Awaited<ReturnType<typeof buildSitrep>>
+}) {
+  return (
+    <footer className="mt-10 border-t border-[color:var(--border)] pt-4">
+      <p className="font-mono text-[10px] leading-relaxed tracking-wide text-[color:var(--ink-3)]">
+        {sitrep.watchlistSize} instruments watched ·{' '}
+        {sitrep.dataQuality.unconfirmedCount} unconfirmed · prices reconciled
+        across two independent sources
+      </p>
+    </footer>
+  )
 }

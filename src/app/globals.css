@@ -1,26 +1,64 @@
 @import "tailwindcss";
 
+/*
+ * SITREP is an intelligence brief, not a trading terminal. The palette is
+ * deliberately restrained: a near-black slate ground, one amber accent for
+ * attention, and semantic colour reserved for severity and direction so that
+ * colour always means something. Nothing decorative competes with the ranking.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0b0d11;
+  --surface: #12151b;
+  --surface-2: #171b23;
+  --border: #232935;
+  --border-strong: #313949;
+
+  --ink: #e8ebf0;
+  --ink-2: #a4adbd;
+  --ink-3: #6d7787;
+
+  --accent: #e0a33d;
+  --accent-ink: #f0c574;
+
+  --up: #3fb984;
+  --down: #e5695c;
+
+  --sev-critical: #e5645a;
+  --sev-important: #e0a33d;
+  --sev-watch: #5aa9c9;
+  --sev-info: #8a93a0;
+  --sev-noise: #4a525f;
 }
 
 @theme inline {
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border-subtle: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-critical: var(--sev-critical);
+  --color-important: var(--sev-important);
+  --color-watch: var(--sev-watch);
+  --color-info: var(--sev-info);
+  --color-noise: var(--sev-noise);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Digits that line up in columns should actually line up. */
+.tabular {
+  font-variant-numeric: tabular-nums;
 }

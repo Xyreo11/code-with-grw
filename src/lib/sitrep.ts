@@ -46,7 +46,10 @@ export interface SitrepItem {
   lastClose: number
   asOf: string
   confidence: number
+  /** False only when two sources actively disagreed. */
   confirmed: boolean
+  /** False when only one source reported — uncorroborated, but not disputed. */
+  corroborated: boolean
   priority: Priority
   intent: Intent
   themeKey: string | null
@@ -217,7 +220,11 @@ export async function buildSitrep(userId: string): Promise<SitrepResult> {
     })
 
     const worstConfidence = Math.min(...instrumentEvents.map((e) => e.confidence))
-    const anyUnconfirmed = instrumentEvents.some((e) => e.confidence < 1)
+    // Confirmed is NOT derived from confidence. A single-source bar sits at 0.9
+    // confidence but is confirmed - nothing contradicted it. Only an actual
+    // cross-source disagreement makes it unconfirmed, and the UI says different
+    // things about the two.
+    const anyUnconfirmed = instrumentEvents.some((e) => !e.confirmed)
 
     const ctx: ScoringContext = {
       priority: row.priority,
@@ -258,6 +265,7 @@ export async function buildSitrep(userId: string): Promise<SitrepResult> {
       asOf: window.asOf,
       confidence: worstConfidence,
       confirmed: !anyUnconfirmed,
+      corroborated: worstConfidence >= 1,
       priority: row.priority,
       intent: row.intent,
       themeKey: instrumentEvents.find((e) => e.theme)?.theme?.scopeKey ?? null,

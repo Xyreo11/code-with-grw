@@ -241,6 +241,11 @@ model Event {
   scorerV      String
   sources      String[]
   confidence   Float    @default(1.0)
+  // Distinct from `confidence`. A single-source bar is UNCORROBORATED (0.9
+  // confidence, still confirmed); only an actual cross-source disagreement is
+  // unconfirmed. Collapsing the two would tell a user that sources disagree
+  // when in truth only one source reported.
+  confirmed    Boolean  @default(true)
   headline     String
   fingerprint  String
   themeId      String?

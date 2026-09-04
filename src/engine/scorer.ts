@@ -349,6 +349,7 @@ export function scoreEvent(
     signals: candidate.signals,
     scorerV: SCORER_VERSION,
     confidence: ctx.dataConfidence,
+    confirmed: ctx.confirmed,
     fingerprint: fingerprintOf(candidate),
   }
 }

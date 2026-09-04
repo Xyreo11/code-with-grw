@@ -156,6 +156,7 @@ function eventRow(instrumentId: string, e: PipelineEvent) {
     scorerV: e.scorerV,
     sources: ['twelvedata'],
     confidence: e.confidence,
+    confirmed: e.confirmed,
     headline: e.headline,
     fingerprint: e.fingerprint,
   }

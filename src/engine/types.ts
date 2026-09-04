@@ -183,6 +183,12 @@ export interface ScoredEvent {
   signals: Signal[]
   scorerV: string
   confidence: number
+  /**
+   * Whether two sources agreed. Distinct from `confidence`: a single-source bar
+   * is uncorroborated but not disputed, and telling a user that sources
+   * disagree when only one reported would be a lie.
+   */
+  confirmed: boolean
   fingerprint: string
 }
 
