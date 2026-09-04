@@ -207,6 +207,7 @@ async function persistThemes(
         score: day.score,
         residualSeries: reg.residuals,
         ret,
+        moveSigmas: moveInSigmas(instrument.bars, barIndex),
         marketExplained: reg.marketExplained,
       })
     }
@@ -250,6 +251,25 @@ async function persistThemes(
   }
 
   return created
+}
+
+/**
+ * A single session's return in units of the instrument's own 20-day volatility.
+ *
+ * Used as the theme participation gate: direction alone is not participation.
+ */
+function moveInSigmas(bars: Bar[], idx: number): number {
+  if (idx < 21) return 0
+  const window = bars.slice(idx - 20, idx + 1)
+  const rets: number[] = []
+  for (let i = 1; i < window.length; i++) {
+    rets.push(Math.log(window[i].closeAdj / window[i - 1].closeAdj))
+  }
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length
+  const variance =
+    rets.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, rets.length - 1)
+  const sigma = Math.sqrt(variance)
+  return sigma > 0 ? rets[rets.length - 1] / sigma : 0
 }
 
 /**

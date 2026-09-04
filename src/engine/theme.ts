@@ -27,6 +27,16 @@ export interface ThemeMember {
   residualSeries: number[]
   /** The member's total return on the event day. */
   ret: number
+  /**
+   * That return in units of the member's own daily volatility.
+   *
+   * Membership needs a magnitude test, not just a direction test. On
+   * 2025-01-27 QCOM closed -0.5% while its sector fell double digits: the sign
+   * is negative, but the name plainly did not participate in the selling, and
+   * listing it as a member of a "selling pressure" theme contradicts its own
+   * card, which correctly reported that it OUTPERFORMED its sector.
+   */
+  moveSigmas: number
   /** The part of that return the market factor explains (beta x market return). */
   marketExplained: number
 }
@@ -66,6 +76,15 @@ export const CONFIDENCE_WEIGHTS = {
 
 /** Below this many co-moving names it is a coincidence, not a theme. */
 export const MIN_THEME_MEMBERS = 3
+
+/**
+ * How far a name must actually move to count as taking part in a theme.
+ *
+ * Without this, any name closing fractionally in the theme's direction is
+ * swept in, which both overstates the theme's size and produces cards that
+ * contradict each other.
+ */
+export const MIN_MEMBER_MOVE_SIGMAS = 1.0
 
 /** Themes below this confidence are not shown. */
 export const MIN_THEME_CONFIDENCE = 45
@@ -182,6 +201,8 @@ export function detectThemes(
   for (const m of members) {
     if (m.direction === 0) continue
     if (!m.sector) continue
+    // Direction alone is not participation.
+    if (Math.abs(m.moveSigmas) < MIN_MEMBER_MOVE_SIGMAS) continue
     const key = `${m.sector}|${m.direction}`
     const list = groups.get(key) ?? []
     list.push(m)

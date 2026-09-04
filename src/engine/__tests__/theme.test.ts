@@ -65,6 +65,9 @@ function members(
     score: 70 - i,
     residualSeries: residuals[i],
     ret,
+    // Test members are constructed as genuine participants unless a test says
+    // otherwise; the participation gate is exercised separately below.
+    moveSigmas: ret < 0 ? -3 : 3,
     marketExplained,
   }))
 }
@@ -223,6 +226,34 @@ describe('detectThemes', () => {
     // The gate is what stops it.
     expect(conf.distinctness).toBeLessThan(MIN_THEME_DISTINCTNESS)
     expect(detectThemes(marketWide, '2020-03-16', '2020-03-16')).toHaveLength(0)
+  })
+
+  it('excludes a name that barely moved, even in the right direction', () => {
+    // The real 2025-01-27 case: QCOM closed -0.5% while its sector fell double
+    // digits. The sign matches the theme, but the name did not take part, and
+    // including it both overstated the theme and contradicted QCOM's own card,
+    // which said it OUTPERFORMED its sector.
+    const participants = members(['NVDA', 'AMD', 'AVGO'], {
+      ret: -0.09,
+      marketExplained: -0.005,
+      residuals: correlatedResiduals(3),
+    })
+    const bystander = {
+      ...participants[0],
+      symbol: 'QCOM',
+      ret: -0.005,
+      moveSigmas: -0.3,
+    }
+
+    const themes = detectThemes(
+      [...participants, bystander],
+      '2025-01-27',
+      '2025-01-27',
+    )
+
+    expect(themes).toHaveLength(1)
+    expect(themes[0].members).not.toContain('QCOM')
+    expect(themes[0].memberCount).toBe(3)
   })
 
   it('requires a minimum number of members', () => {

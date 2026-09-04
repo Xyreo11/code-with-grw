@@ -105,6 +105,40 @@ const sectorSpecificRule: Rule = (i) => {
   }
 }
 
+/**
+ * A theme AND a moving market.
+ *
+ * Neither `sector_specific` nor `broad_market` describes this honestly.
+ * On 2025-01-27 the semiconductors fell far harder than everything else, but
+ * the market fell too - so calling it purely sector-specific overstates, and
+ * calling it a broad market move buries the part that actually explains the
+ * day. The truthful sentence is that the sector led it.
+ */
+const themeLedMarketRule: Rule = (i) => {
+  const theme = i.themes[0]
+  if (!theme) return null
+  if (Math.abs(i.marketSigmas) < CALM_MARKET_SIGMAS) return null
+  // Same direction: a sector rallying into a falling market is not "leading" it.
+  if (Math.sign(i.marketReturn) !== theme.direction) return null
+
+  const word = theme.direction < 0 ? 'decline' : 'rally'
+  return {
+    ruleId: 'theme_led_market',
+    text:
+      `${theme.scopeKey} names are driving a broader ${word} in your watchlist. ` +
+      `The market moved ${fmtPct(i.marketReturn)} (${Math.abs(i.marketSigmas).toFixed(1)}σ), ` +
+      `but your ${theme.scopeKey} names moved further and together ` +
+      `(${theme.confidence.toFixed(0)}% confidence) — they led it rather than merely following.`,
+    inputs: {
+      sector: theme.scopeKey,
+      themeConfidence: theme.confidence,
+      marketReturn: i.marketReturn,
+      marketSigmas: i.marketSigmas,
+      distinctness: theme.distinctness,
+    },
+  }
+}
+
 const broadMarketRule: Rule = (i) => {
   if (i.breadth < BROAD_BREADTH) return null
   if (Math.abs(i.marketSigmas) < BROAD_MARKET_SIGMAS) return null
@@ -163,6 +197,7 @@ const RULES: Rule[] = [
   quietRule,
   rotationRule,
   sectorSpecificRule,
+  themeLedMarketRule,
   broadMarketRule,
   singleThemeRule,
   scatteredRule,
