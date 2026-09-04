@@ -1,0 +1,440 @@
+// SITREP — schema
+//
+// Design notes that matter:
+//  - `Event` is APPEND-ONLY. Corrections and escalations are new rows linked by
+//    `supersedesId`, never an UPDATE. That is what keeps the timeline truthful
+//    and lets us re-score history under a new `scorerV` without losing the past.
+//  - Market data (Instrument/DailyBar/FeatureDaily/Event/Theme) is shared global
+//    state computed ONCE per instrument. Per-user rows are only cursors and
+//    read-state. Adding users adds fan-out, never analytical work.
+//  - `UserWatchState` is THE CURSOR: the per-(user,instrument) pointer into the
+//    event timeline that powers "since you last checked".
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7: the connection URL lives in prisma.config.ts, not here.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- identity
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  // { attentionBudget: number, timezone: string }
+  settings     Json     @default("{}")
+  lastActiveAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  sessions   Session[]
+  watchlists Watchlist[]
+  watchState UserWatchState[]
+  eventState UserEventState[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------- watchlist
+
+enum Priority {
+  HIGH
+  NORMAL
+  LOW
+}
+
+enum Intent {
+  CONSIDERING_BUY
+  HOLDING
+  THEMATIC
+  HEDGE
+  NONE
+}
+
+model Watchlist {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String   @default("My Watchlist")
+  createdAt DateTime @default(now())
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items WatchlistItem[]
+
+  @@index([userId])
+  @@map("watchlists")
+}
+
+model WatchlistItem {
+  id           String   @id @default(uuid())
+  watchlistId  String
+  instrumentId String
+  intent       Intent   @default(NONE)
+  // Explicit, user-controlled relevance. Feeds the scorer as a flat multiplier
+  // (HIGH x1.3, NORMAL x1.0, LOW x0.7). No learning loop, no cold start.
+  priority     Priority @default(NORMAL)
+  targetHigh   Decimal? @db.Decimal(18, 6)
+  targetLow    Decimal? @db.Decimal(18, 6)
+  addedAt      DateTime @default(now())
+
+  watchlist  Watchlist  @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, instrumentId])
+  // Reverse lookup: "who watches this instrument?" — drives event fan-out.
+  @@index([instrumentId])
+  @@map("watchlist_items")
+}
+
+// ---------------------------------------------------------------- market ref
+
+model Instrument {
+  id          String  @id @default(uuid())
+  symbol      String  @unique
+  name        String
+  sector      String?
+  // Self-reference: the sector proxy is just another instrument we ingest,
+  // so relative-performance regressions need no special-casing.
+  sectorEtfId String?
+  isActive    Boolean @default(true)
+  isEtf       Boolean @default(false)
+
+  sectorEtf Instrument?  @relation("SectorProxy", fields: [sectorEtfId], references: [id])
+  proxyFor  Instrument[] @relation("SectorProxy")
+
+  bars           DailyBar[]
+  features       FeatureDaily[]
+  events         Event[]
+  watchlistItems WatchlistItem[]
+  watchState     UserWatchState[]
+  conflicts      BarConflict[]
+  earnings       EarningsEvent[]
+
+  @@index([sector])
+  @@map("instruments")
+}
+
+model DailyBar {
+  instrumentId String
+  barDate      DateTime @db.Date
+  open         Decimal  @db.Decimal(18, 6)
+  high         Decimal  @db.Decimal(18, 6)
+  low          Decimal  @db.Decimal(18, 6)
+  close        Decimal  @db.Decimal(18, 6)
+  closeAdj     Decimal  @db.Decimal(18, 6)
+  volume       BigInt
+  source       String
+  asOf         DateTime
+  confidence   Float    @default(1.0)
+  // false when two sources disagreed beyond tolerance. Propagates into the
+  // score as a multiplier and into the UI as an "unconfirmed" badge.
+  confirmed    Boolean  @default(true)
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@id([instrumentId, barDate])
+  @@index([barDate])
+  @@map("daily_bars")
+}
+
+model BarConflict {
+  id           String   @id @default(uuid())
+  instrumentId String
+  barDate      DateTime @db.Date
+  field        String
+  sourceA      String
+  valueA       Decimal  @db.Decimal(18, 6)
+  sourceB      String
+  valueB       Decimal  @db.Decimal(18, 6)
+  deltaPct     Float
+  resolvedTo   String
+  detectedAt   DateTime @default(now())
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@index([instrumentId, barDate])
+  @@map("bar_conflicts")
+}
+
+model EarningsEvent {
+  id           String   @id @default(uuid())
+  instrumentId String
+  reportDate   DateTime @db.Date
+  // "bmo" (before open), "amc" (after close), or null if unknown
+  session      String?
+  epsEstimate  Float?
+  epsActual    Float?
+  source       String
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([instrumentId, reportDate])
+  @@index([reportDate])
+  @@map("earnings_events")
+}
+
+model FeatureDaily {
+  instrumentId String
+  barDate      DateTime @db.Date
+  // Full feature vector { f1..fN + intermediates }. Stored so an event can be
+  // explained later without recomputing, and so calibration can replay it.
+  vec          Json
+  atr14        Float?
+  rv10         Float?
+  rv60         Float?
+  betaSpy      Float?
+  betaSector   Float?
+  residSpy     Float?
+  residSector  Float?
+  engineV      String
+  computedAt   DateTime @default(now())
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@id([instrumentId, barDate])
+  @@map("features_daily")
+}
+
+// ---------------------------------------------------------------- intelligence
+
+enum Severity {
+  CRITICAL
+  IMPORTANT
+  WATCH
+  INFO
+  NOISE
+}
+
+model Event {
+  id           String   @id @default(uuid())
+  instrumentId String
+  // When it HAPPENED in market time — not when we ingested it. Late-arriving
+  // data therefore lands in the right place on the timeline.
+  marketTime   DateTime
+  detectedAt   DateTime @default(now())
+  type         String
+  direction    Int      @default(0)
+  magnitude    Float
+  // Feature snapshot at trigger time.
+  features     Json
+  // Signed per-feature contributions. Positive entries power "Why am I seeing
+  // this?"; negative entries power "Why not higher?". Same array, both views.
+  contributions Json
+  score        Float
+  severity     Severity
+  scorerV      String
+  sources      String[]
+  confidence   Float    @default(1.0)
+  headline     String
+  fingerprint  String
+  themeId      String?
+  supersedesId String?
+  // Non-null when this event belongs to a replayed historical scenario rather
+  // than the live timeline.
+  scenarioId   String?
+
+  instrument Instrument       @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  theme      Theme?           @relation(fields: [themeId], references: [id])
+  supersedes Event?           @relation("EventSupersedes", fields: [supersedesId], references: [id])
+  supersededBy Event[]        @relation("EventSupersedes")
+  scenario   Scenario?        @relation(fields: [scenarioId], references: [id])
+  userState  UserEventState[]
+
+  @@unique([fingerprint])
+  @@index([instrumentId, marketTime(sort: Desc)])
+  @@index([scenarioId, marketTime])
+  @@index([severity, marketTime(sort: Desc)])
+  @@index([themeId])
+  @@map("events")
+}
+
+model Theme {
+  id          String   @id @default(uuid())
+  scope       String // "sector" | "market"
+  scopeKey    String // e.g. "Semiconductors"
+  windowStart DateTime
+  windowEnd   DateTime
+  memberCount Int
+  // Total confidence 0-100, plus its four components. Components are stored so
+  // a theme can be explained the same way an event is — not just asserted.
+  confidence   Float
+  cohesion     Float
+  timing       Float
+  size         Float
+  distinctness Float
+  characteristics String[]
+  summary      String
+  active       Boolean  @default(true)
+  scenarioId   String?
+  createdAt    DateTime @default(now())
+
+  events   Event[]
+  scenario Scenario? @relation(fields: [scenarioId], references: [id])
+
+  @@index([scopeKey, windowEnd])
+  @@index([scenarioId])
+  @@map("themes")
+}
+
+model Narrative {
+  id          String   @id @default(uuid())
+  userId      String?
+  windowStart DateTime
+  windowEnd   DateTime
+  // Which deterministic rule produced this. No LLM in the conclusion path.
+  ruleId      String
+  text        String
+  inputs      Json
+  scenarioId  String?
+  createdAt   DateTime @default(now())
+
+  scenario Scenario? @relation(fields: [scenarioId], references: [id])
+
+  @@index([userId, windowEnd])
+  @@index([scenarioId])
+  @@map("narratives")
+}
+
+model Scenario {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  name        String
+  description String
+  startDate   DateTime @db.Date
+  endDate     DateTime @db.Date
+  symbols     String[]
+  createdAt   DateTime @default(now())
+
+  events     Event[]
+  themes     Theme[]
+  narratives Narrative[]
+
+  @@map("scenarios")
+}
+
+// ---------------------------------------------------------------- per-user state
+
+model UserWatchState {
+  userId       String
+  instrumentId String
+  // THE CURSOR. Everything "since you last checked" is a range query from here.
+  lastSeenAt   DateTime
+  // Snapshot digest of what the user actually saw, so the then/now diff is
+  // against their real baseline rather than an arbitrary previous close.
+  lastSeenSnap Json
+  // Monotonic guard so two devices can never move the cursor backwards.
+  cursorVersion BigInt  @default(0)
+  updatedAt    DateTime @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@id([userId, instrumentId])
+  @@map("user_watch_state")
+}
+
+enum EventStatus {
+  UNSEEN
+  SEEN
+  DISMISSED
+  SNOOZED
+  ACTED
+}
+
+model UserEventState {
+  userId       String
+  eventId      String
+  status       EventStatus @default(UNSEEN)
+  snoozedUntil DateTime?
+  actedKind    String?
+  updatedAt    DateTime    @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@id([userId, eventId])
+  @@index([userId, status])
+  @@map("user_event_state")
+}
+
+// ---------------------------------------------------------------- ops
+
+enum BreakerState {
+  CLOSED
+  OPEN
+  HALF_OPEN
+}
+
+model DataSource {
+  id        String  @id // "stooq" | "twelvedata" | "finnhub"
+  kind      String // "bar" | "earnings" | "news"
+  // Lower = more trusted. Drives conflict resolution.
+  trustRank Int
+  rateLimit Json
+  enabled   Boolean @default(true)
+
+  freshness  DataFreshness[]
+  ingestRuns IngestRun[]
+
+  @@map("data_sources")
+}
+
+model DataFreshness {
+  sourceId     String
+  kind         String
+  lastSuccess  DateTime?
+  lastAttempt  DateTime?
+  lastError    String?
+  breakerState BreakerState @default(CLOSED)
+  consecutiveFailures Int   @default(0)
+  lagSeconds   Int?
+
+  source DataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@id([sourceId, kind])
+  @@map("data_freshness")
+}
+
+model IngestRun {
+  id           String    @id @default(uuid())
+  sourceId     String
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  rowsIn       Int       @default(0)
+  rowsRejected Int       @default(0)
+  status       String    @default("running") // running | ok | partial | failed
+  note         String?
+
+  source DataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([sourceId, startedAt(sort: Desc)])
+  @@map("ingest_runs")
+}
+
+model DeadLetter {
+  id         String   @id @default(uuid())
+  sourceId   String
+  symbol     String?
+  payload    Json
+  reason     String
+  createdAt  DateTime @default(now())
+
+  @@index([sourceId, createdAt(sort: Desc)])
+  @@map("dead_letters")
+}
