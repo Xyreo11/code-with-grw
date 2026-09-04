@@ -47,7 +47,7 @@ export const SCENARIOS: ScenarioDefinition[] = [
     description:
       'Late January 2025. Semiconductor names fall hard together while the broader market holds up.',
     teaches:
-      'A theme forms on 27 Jan with 74% distinctness, and the narrative identifies the semiconductors as LEADING the selloff rather than merely following the market down.',
+      'A theme forms on 27 Jan with high distinctness, and the narrative identifies the semiconductors as LEADING the selloff rather than merely following the market down. The components are printed on the theme card — compare them with the COVID window, where distinctness collapses and no theme fires.',
     startDate: '2025-01-15',
     endDate: '2025-02-07',
     symbols: ['NVDA', 'AMD', 'AVGO', 'MU', 'INTC', 'QCOM'],
@@ -188,9 +188,23 @@ export async function replayScenario(slug: string): Promise<{
       const idx = barByDate.get(day.date)
       if (idx === undefined || idx < 1) continue
 
-      const lead = [...day.events].sort((a, b) => b.score - a.score)[0]
       const returnPct = bars[idx].closeAdj / bars[idx - 1].closeAdj - 1
       const { positives, suppressors } = explainContributions(day.contributions)
+
+      // Same rule the live brief uses: lead with the event that owns the
+      // top-ranked reason, so the headline and the reasoning underneath it
+      // never name different things. Kept in step deliberately - replay exists
+      // to show the real engine, not a second presentation of it.
+      const top = positives.find((c) => c.kind === 'additive')
+      const byScore = [...day.events].sort((a, b) => b.score - a.score)
+      const lead =
+        (top &&
+          byScore.find((e) =>
+            e.signals.some(
+              (sig) => sig.key === top.key && sig.label === top.label,
+            ),
+          )) ||
+        byScore[0]
 
       const list = dayMap.get(day.date) ?? []
       list.push({

@@ -69,6 +69,8 @@ export interface SitrepResult {
   /** Severity histogram across the whole watchlist, for the budget bar. */
   budget: Record<Severity, number>
   withinNormalRange: number
+  /** Names the user actively silenced. Never folded into "normal range". */
+  snoozedCount: number
   /** Flagged by the engine but cut by the attention budget. */
   belowBudget: number
   watchlistSize: number
@@ -177,6 +179,25 @@ export async function buildSitrep(userId: string): Promise<SitrepResult> {
     (e) => !seenIds.has(e.id) && !snoozedIds.has(e.id),
   )
 
+  // Names the user actively silenced, tracked separately.
+  //
+  // A snoozed name has NOT "moved within its normal range" - the engine flagged
+  // it and the user deferred it, without advancing the cursor. Folding the two
+  // together would let the brief under-report what it actually found, which is
+  // the one lie a product built on filtering cannot afford to tell.
+  //
+  // The boundary: an instrument counts as silenced only when snoozing removed
+  // everything it had to say. If something else about it is still visible, it
+  // was still assessed, and it belongs in the ordinary counts.
+  const visibleInstruments = new Set(visible.map((e) => e.instrumentId))
+  const snoozedInstruments = new Set(
+    events
+      .filter(
+        (e) => snoozedIds.has(e.id) && !visibleInstruments.has(e.instrumentId),
+      )
+      .map((e) => e.instrumentId),
+  )
+
   // ---- per-instrument re-scoring under this user's context ---------------
   const byInstrument = new Map<string, typeof visible>()
   for (const e of visible) {
@@ -198,7 +219,9 @@ export async function buildSitrep(userId: string): Promise<SitrepResult> {
   for (const row of rows) {
     const instrumentEvents = byInstrument.get(row.instrumentId) ?? []
     if (instrumentEvents.length === 0) {
-      budget.NOISE++
+      // A silenced name is not a quiet one. Counting it as NOISE would let the
+      // budget bar claim the market was calm when the user simply muted it.
+      if (!snoozedInstruments.has(row.instrumentId)) budget.NOISE++
       continue
     }
 
@@ -240,10 +263,31 @@ export async function buildSitrep(userId: string): Promise<SitrepResult> {
     const scored = scoreSignals(signals, ctx)
     const { positives, suppressors } = explainContributions(scored.contributions)
 
-    // The headline comes from the STRONGEST event, not the most recent one.
-    // Ordering by time meant a name that moved 62% over the window could be
-    // introduced by a passing volume note, burying the thing that mattered.
-    const lead = [...instrumentEvents].sort((a, b) => b.score - a.score)[0]
+    // The headline must name the same thing the reasoning ranks first.
+    //
+    // Two earlier versions of this line were both wrong. Ordering by TIME meant
+    // a name that moved 62% over the window could be introduced by a passing
+    // volume note. Ordering by raw event SCORE fixed that but introduced a
+    // subtler problem: the Why panel ranks merged signals re-scored under this
+    // user's priority and intent, so NVDA could be headlined "Volume is 2.7x
+    // normal" while the panel underneath said the top reason was sector
+    // divergence. Both statements were true and the pair read as a
+    // contradiction.
+    //
+    // So the lead is the event that OWNS the winning signal - matched on label
+    // as well as key, because the same detector can fire on several days and
+    // only one of those instances is the one the panel is showing.
+    const top = positives.find((c) => c.kind === 'additive')
+    const lead =
+      (top &&
+        [...instrumentEvents]
+          .sort((a, b) => b.score - a.score)
+          .find((e) =>
+            ((e.features as { signals?: Signal[] } | null)?.signals ?? []).some(
+              (sig) => sig.key === top.key && sig.label === top.label,
+            ),
+          )) ||
+      [...instrumentEvents].sort((a, b) => b.score - a.score)[0]
 
     budget[scored.severity]++
 
@@ -284,7 +328,8 @@ export async function buildSitrep(userId: string): Promise<SitrepResult> {
   // attention budget cut is NOT "within normal range" - saying so would
   // misreport what was actually found, which is the one thing a product built
   // on filtering cannot afford to do.
-  const withinNormalRange = rows.length - surfaced.length
+  const withinNormalRange =
+    rows.length - surfaced.length - snoozedInstruments.size
   const belowBudget = surfaced.length - shown.length
 
   // ---- themes and narrative ---------------------------------------------
@@ -333,7 +378,15 @@ export async function buildSitrep(userId: string): Promise<SitrepResult> {
         : 0,
     watchlistSize: rows.length,
     notableCount: surfaced.length,
+    snoozedCount: snoozedInstruments.size,
   })
+
+  const latestBar = await db.dailyBar.findFirst({
+    where: { instrumentId: { in: instrumentIds } },
+    orderBy: { barDate: 'desc' },
+    select: { barDate: true },
+  })
+  const latestAsOf = latestBar?.barDate.toISOString().slice(0, 10) ?? null
 
   const freshness = await db.dataFreshness.findMany({
     orderBy: { lastSuccess: 'asc' },
@@ -344,12 +397,16 @@ export async function buildSitrep(userId: string): Promise<SitrepResult> {
     displayName: user.displayName,
     since,
     absenceHours,
-    asOf: shown[0]?.asOf ?? items[0]?.asOf ?? null,
+    // Falls back to the latest bar we hold, because "as of" describes the DATA,
+    // not the brief. Deriving it from the surfaced items made a quiet day read
+    // "no data yet", which says the pipeline is broken when it is working.
+    asOf: shown[0]?.asOf ?? items[0]?.asOf ?? latestAsOf,
     items: shown,
     themes,
     narrative,
     budget,
     withinNormalRange,
+    snoozedCount: snoozedInstruments.size,
     belowBudget,
     watchlistSize: rows.length,
     quiet: surfaced.length === 0,
@@ -452,6 +509,7 @@ function emptyResult(displayName: string, attentionBudget: number): SitrepResult
     },
     budget: { CRITICAL: 0, IMPORTANT: 0, WATCH: 0, INFO: 0, NOISE: 0 },
     withinNormalRange: 0,
+    snoozedCount: 0,
     belowBudget: 0,
     watchlistSize: 0,
     quiet: true,
@@ -528,16 +586,52 @@ export async function markSeen(
   return { moved }
 }
 
-export async function snoozeEvent(
+/**
+ * Defer, without acknowledging.
+ *
+ * Snooze and mark-seen are deliberately different operations. Mark-seen means
+ * "I have absorbed this" and moves the cursor, so the next brief measures from
+ * now. Snooze means "not now" and moves nothing: the cursor stays put, the
+ * window keeps growing, and when the snooze lapses the event returns with its
+ * original timestamp intact. Conflating them would quietly destroy the very
+ * thing this product is built around.
+ *
+ * Scoped through the user's own watchlist, so an id they do not watch cannot be
+ * written into their state - the same ownership check mark-seen applies.
+ */
+export async function snoozeEvents(
   userId: string,
-  eventId: string,
+  eventIds: string[],
   until: Date,
-): Promise<void> {
-  await db.userEventState.upsert({
-    where: { userId_eventId: { userId, eventId } },
-    create: { userId, eventId, status: 'SNOOZED', snoozedUntil: until },
-    update: { status: 'SNOOZED', snoozedUntil: until },
+): Promise<{ snoozed: number }> {
+  if (eventIds.length === 0) return { snoozed: 0 }
+
+  const watchlist = await db.watchlist.findFirst({
+    where: { userId },
+    select: { items: { select: { instrumentId: true } } },
   })
+  const owned = new Set((watchlist?.items ?? []).map((i) => i.instrumentId))
+
+  const events = await db.event.findMany({
+    where: { id: { in: eventIds } },
+    select: { id: true, instrumentId: true },
+  })
+  const allowed = events.filter((e) => owned.has(e.instrumentId))
+
+  for (const e of allowed) {
+    await db.userEventState.upsert({
+      where: { userId_eventId: { userId, eventId: e.id } },
+      create: {
+        userId,
+        eventId: e.id,
+        status: 'SNOOZED',
+        snoozedUntil: until,
+      },
+      update: { status: 'SNOOZED', snoozedUntil: until },
+    })
+  }
+
+  return { snoozed: allowed.length }
 }
 
 /**

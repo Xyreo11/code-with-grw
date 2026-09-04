@@ -30,10 +30,10 @@ Open http://localhost:3000 and sign in as `demo@sitrep.local` / `sitrep-demo`.
 | `/admin/pipeline` | Ingest runs, data quality, engine version |
 
 ```bash
-npm test              # 130 unit tests, engine + ingestion
+npm test              # 133 unit tests, engine + ingestion
 npm run test:e2e      # 4 Playwright journeys through a real browser
 npm run calibrate     # replay history, rewrite docs/calibration.md
-npx tsx scripts/verify-requirements.ts   # 25 checks against the brief's minimums
+npx tsx scripts/verify-requirements.ts   # 30 checks against the brief's minimums
 ```
 
 ### Background ingestion (optional, needs API keys)
@@ -178,7 +178,17 @@ Across the committed dataset that leaves **8 genuine conflicts in 33,616 bars** 
 - **Recency decay runs from the cursor, not the clock.** Every event past the cursor is unseen *by definition*. Decaying from `now` meant a 5σ move three days into a ten-week absence hit the floor and was filed as noise — precisely what the user came back to learn.
 - **Window moves, not daily moves.** "NVDA is down 0.4% today" hides what actually happened: down 8% since you last looked.
 
-Names flagged but cut by the attention budget are reported separately from names that genuinely did nothing. Calling them "within normal range" would misreport what the engine found, which a product built on filtering cannot afford.
+**Two ways to clear a card, and they are not the same operation.** *Mark seen* means "I have absorbed this" and moves the cursor, so the next brief measures from now. *Snooze* means "not now" and moves nothing — the window keeps growing and the event returns, with its original timestamp, when the snooze lapses. Conflating them would quietly destroy the thing the product is built around.
+
+The brief therefore reports **three** distinct populations, never folded together:
+
+| | means |
+|---|---|
+| below your attention budget | the engine flagged it; the budget cut it |
+| within normal range | the engine looked and found nothing |
+| snoozed | *you* silenced it; still pending, not cleared |
+
+Calling any of these "quiet" would misreport what the engine found, which a product built on filtering cannot afford. Snoozing the last live item shows *"Nothing new"*, not *"your market is quiet"* — the second is a claim about the market that the engine never made.
 
 ---
 
@@ -226,7 +236,7 @@ Replay is only honest if the engine at date *T* sees exactly what it would have 
 
 ## Testing
 
-130 unit tests, 4 browser journeys, and 25 scored checks against the brief's three minimums.
+133 unit tests, 5 browser journeys, and 30 scored checks against the brief's three minimums.
 
 Every detector has a **firing fixture and a must-not-fire fixture** — a detector that only ever fires is indistinguishable from a broken one, and on a product whose promise is filtering noise, false positives are the expensive failure.
 
@@ -240,7 +250,7 @@ Several tests exist specifically to pin down bugs that were written and then cau
 - a 2:1 split deliberately passes the validator — documented as a limitation rather than faked
 
 The browser suite is deliberately thin: four journeys covering the three
-minimums plus replay. Broad UI coverage of a product whose logic already has 130
+minimums plus replay. Broad UI coverage of a product whose logic already has 133
 unit tests would be slow to run, slower to maintain, and would mostly re-test
 React. It did earn its place immediately though — it caught the acknowledge
 button hiding a card optimistically without ever re-reading the brief, so the

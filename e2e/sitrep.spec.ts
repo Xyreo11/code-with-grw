@@ -74,6 +74,43 @@ test('a returning user sees what changed, why, and can clear it', async ({
   ).toBeVisible()
 })
 
+test('snoozing defers an event without advancing the cursor', async ({
+  page,
+}) => {
+  await signIn(page)
+
+  const header = page.getByText(/HERE'S WHAT CHANGED SINCE YOU LAST CHECKED/)
+  const before = (await header.innerText()).trim()
+
+  const card = page.locator('article').first()
+  const symbol = (await card.locator('h3').first().innerText()).trim()
+
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes('/api/watch-state/snooze') && r.ok(),
+    ),
+    card.getByRole('button', { name: 'Snooze 24h' }).click(),
+  ])
+
+  await page.reload()
+
+  // Gone from the brief...
+  await expect(
+    page
+      .locator('article')
+      .filter({ has: page.getByRole('heading', { name: symbol, exact: true }) }),
+  ).toHaveCount(0)
+
+  // ...but the cursor did NOT move. This is the whole point of snooze: the
+  // window still measures from the last real acknowledgement, so the deferred
+  // event returns intact rather than being silently absorbed.
+  await expect(header).toHaveText(before)
+
+  // And the brief says so rather than counting it as a quiet name.
+  await expect(page.getByText(/snoozed/)).toBeVisible()
+  await expect(page.getByText(/still pending, not cleared/)).toBeVisible()
+})
+
 test('the watchlist can be managed', async ({ page }) => {
   await signIn(page)
   await page.getByRole('link', { name: 'manage watchlist' }).click()
@@ -87,15 +124,19 @@ test('the watchlist can be managed', async ({ page }) => {
   // Priority is a real control, not decoration: it multiplies the score.
   const firstRow = rows.first()
   const symbol = (await firstRow.locator('span').first().innerText()).trim()
+
+  // Match the ticker exactly. `hasText` is a case-insensitive SUBSTRING match,
+  // so filtering on "MU" also selected every name in Communication Services -
+  // which only showed up once the seed order changed and MU landed first.
+  const row = rows.filter({ has: page.getByText(symbol, { exact: true }) })
+
   await firstRow.locator('select').first().selectOption('HIGH')
   await page.reload()
 
-  await expect(
-    rows.filter({ hasText: symbol }).locator('select').first(),
-  ).toHaveValue('HIGH')
+  await expect(row.locator('select').first()).toHaveValue('HIGH')
 
   // Remove it, confirm the list shrank, then add it back.
-  await rows.filter({ hasText: symbol }).getByRole('button', { name: 'Remove' }).click()
+  await row.getByRole('button', { name: 'Remove' }).click()
   await expect(rows).toHaveCount(before - 1)
 
   await page.getByRole('button', { name: `+ ${symbol}` }).click()

@@ -4,9 +4,12 @@ import { markSeen } from '@/lib/sitrep'
 import { db } from '@/lib/db'
 import { handler, ok, parseBody } from '@/lib/api'
 
+/** Bounded for the same reason as snooze: no unbounded IN clause from a client. */
+const MAX_IDS = 500
+
 const schema = z.object({
-  symbols: z.array(z.string()).optional(),
-  eventIds: z.array(z.string()).optional().default([]),
+  symbols: z.array(z.string()).max(MAX_IDS).optional(),
+  eventIds: z.array(z.string()).max(MAX_IDS).optional().default([]),
   /** Acknowledge everything currently in the brief. */
   all: z.boolean().optional().default(false),
 })

@@ -71,6 +71,12 @@ export default async function PipelinePage() {
             <Stat key={s} label={s.toLowerCase()} value={String(counts.get(s) ?? 0)} />
           ))}
         </dl>
+        <p className="mt-3 text-xs leading-relaxed text-[color:var(--ink-3)]">
+          Per detector firing, before personalisation. A brief can show a name
+          as CRITICAL when no single event here is: the read path merges every
+          signal for that instrument and re-scores it under the user&rsquo;s own
+          priority and intent. These are different units, not a disagreement.
+        </p>
       </Section>
 
       <Section title="DATA QUALITY">

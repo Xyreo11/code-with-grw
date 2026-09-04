@@ -25,6 +25,8 @@ export interface NarrativeInput {
   watchlistSize: number
   /** Count of events at WATCH severity or above. */
   notableCount: number
+  /** Names the user silenced. Quiet and muted are not the same claim. */
+  snoozedCount?: number
 }
 
 export interface Narrative {
@@ -46,10 +48,27 @@ type Rule = (input: NarrativeInput) => Narrative | null
 
 const quietRule: Rule = (i) => {
   if (i.notableCount > 0) return null
+
+  // "All N names moved within their normal range" is only true when none were
+  // muted. Snoozing the last live item must not turn into a claim that the
+  // market was calm - that is the product asserting something it does not know.
+  const snoozed = i.snoozedCount ?? 0
+  const calm = i.watchlistSize - snoozed
+  const text =
+    snoozed > 0
+      ? `Nothing new needs attention. ${calm} name${calm === 1 ? '' : 's'} moved ` +
+        `within ${calm === 1 ? 'its' : 'their'} normal range, and ${snoozed} ` +
+        `${snoozed === 1 ? 'is' : 'are'} snoozed rather than resolved.`
+      : `Nothing in your watchlist needs attention. All ${i.watchlistSize} names moved within their normal range.`
+
   return {
     ruleId: 'quiet',
-    text: `Nothing in your watchlist needs attention. All ${i.watchlistSize} names moved within their normal range.`,
-    inputs: { notableCount: i.notableCount, watchlistSize: i.watchlistSize },
+    text,
+    inputs: {
+      notableCount: i.notableCount,
+      watchlistSize: i.watchlistSize,
+      snoozedCount: snoozed,
+    },
   }
 }
 
@@ -183,12 +202,30 @@ const singleThemeRule: Rule = (i) => {
   }
 }
 
+/**
+ * One name, on its own.
+ *
+ * Needs its own rule rather than a plural fix-up: "they do not share a common
+ * driver" is meaningless about a single stock, and the useful thing to say is
+ * the opposite - that nothing else moved, which is itself information.
+ */
+const isolatedRule: Rule = (i) => {
+  if (i.notableCount !== 1) return null
+  return {
+    ruleId: 'isolated',
+    text:
+      `One name needs attention. The rest of your watchlist moved within its ` +
+      `normal range, so this looks specific to the company rather than part of ` +
+      `a wider move.`,
+    inputs: { notableCount: 1, watchlistSize: i.watchlistSize },
+  }
+}
+
 const scatteredRule: Rule = (i) => ({
   ruleId: 'scattered',
   text:
-    `${i.notableCount} name${i.notableCount === 1 ? '' : 's'} in your watchlist ` +
-    `need${i.notableCount === 1 ? 's' : ''} attention, but they do not share a common driver. ` +
-    `These look like independent, company-specific moves.`,
+    `${i.notableCount} names in your watchlist need attention, but they do not ` +
+    `share a common driver. These look like independent, company-specific moves.`,
   inputs: { notableCount: i.notableCount, themeCount: i.themes.length },
 })
 
@@ -200,6 +237,7 @@ const RULES: Rule[] = [
   themeLedMarketRule,
   broadMarketRule,
   singleThemeRule,
+  isolatedRule,
   scatteredRule,
 ]
 

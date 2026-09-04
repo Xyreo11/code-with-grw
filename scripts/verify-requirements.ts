@@ -1,6 +1,11 @@
 import 'dotenv/config'
 import { db } from '../src/lib/db'
-import { buildSitrep, markSeen, ensureCursors } from '../src/lib/sitrep'
+import {
+  buildSitrep,
+  markSeen,
+  ensureCursors,
+  snoozeEvents,
+} from '../src/lib/sitrep'
 import { replayScenario, SCENARIOS } from '../src/lib/scenarios'
 
 /**
@@ -171,9 +176,12 @@ async function main() {
     )
     check(
       'accounting balances',
-      after.items.length + after.belowBudget + after.withinNormalRange ===
+      after.items.length +
+        after.belowBudget +
+        after.withinNormalRange +
+        after.snoozedCount ===
         after.watchlistSize,
-      `${after.items.length} shown + ${after.belowBudget} below budget + ${after.withinNormalRange} normal = ${after.watchlistSize}`,
+      `${after.items.length} shown + ${after.belowBudget} below budget + ${after.withinNormalRange} normal + ${after.snoozedCount} snoozed = ${after.watchlistSize}`,
     )
   }
 
@@ -185,6 +193,55 @@ async function main() {
     JSON.stringify(readA.items.map((i) => i.symbol)) ===
       JSON.stringify(readB.items.map((i) => i.symbol)),
   )
+
+  // Snooze is not a quiet mark-seen: it must defer WITHOUT moving the cursor,
+  // and the brief must keep saying so rather than reporting a calm market.
+  const preSnooze = await buildSitrep(user.id)
+  const victim = preSnooze.items[0]
+
+  if (victim) {
+    const cursorBefore = preSnooze.since?.getTime() ?? null
+
+    await snoozeEvents(user.id, victim.eventIds, new Date(Date.now() + 3_600_000))
+    const snoozed = await buildSitrep(user.id)
+
+    check(
+      'snoozing removes the item from the brief',
+      !snoozed.items.some((i) => i.symbol === victim.symbol),
+      `${victim.symbol} deferred`,
+    )
+    check(
+      'snoozing does NOT advance the cursor',
+      (snoozed.since?.getTime() ?? null) === cursorBefore,
+      'window still measured from the last real acknowledgement',
+    )
+    check(
+      'a snoozed name is not reported as within normal range',
+      snoozed.snoozedCount > 0 &&
+        snoozed.withinNormalRange === preSnooze.withinNormalRange,
+      `${snoozed.snoozedCount} snoozed, normal-range count unchanged`,
+    )
+    check(
+      'accounting still balances with a snooze outstanding',
+      snoozed.items.length +
+        snoozed.belowBudget +
+        snoozed.withinNormalRange +
+        snoozed.snoozedCount ===
+        snoozed.watchlistSize,
+    )
+
+    await snoozeEvents(user.id, victim.eventIds, new Date(Date.now() - 1000))
+    const returned = await buildSitrep(user.id)
+    check(
+      'an expired snooze returns the event, it is not silently dropped',
+      returned.items.some((i) => i.symbol === victim.symbol),
+      `${victim.symbol} back`,
+    )
+
+    await db.userEventState.deleteMany({
+      where: { userId: user.id, eventId: { in: victim.eventIds } },
+    })
+  }
 
   // ---------------------------------------------------------------- extras
   console.log('\n[extra] Explainability, themes, replay')

@@ -30,9 +30,12 @@ const COLOR: Record<Severity, string> = {
 export function AttentionBudget({
   budget,
   watchlistSize,
+  snoozedCount = 0,
 }: {
   budget: Record<Severity, number>
   watchlistSize: number
+  /** Muted names get their own row; folding them into Quiet would overstate calm. */
+  snoozedCount?: number
 }) {
   const total = Math.max(1, watchlistSize)
 
@@ -63,6 +66,25 @@ export function AttentionBudget({
             </div>
           )
         })}
+        {snoozedCount > 0 && (
+          <div className="flex items-center gap-3">
+            <span className="w-20 shrink-0 text-xs text-[color:var(--ink-2)]">
+              Snoozed
+            </span>
+            <span className="h-2 flex-1 overflow-hidden rounded-sm bg-[color:var(--surface-2)]">
+              <span
+                className="block h-full rounded-sm opacity-60 transition-[width] duration-500"
+                style={{
+                  width: `${(snoozedCount / total) * 100}%`,
+                  background: 'var(--sev-watch)',
+                }}
+              />
+            </span>
+            <span className="tabular w-6 shrink-0 text-right font-mono text-xs text-[color:var(--ink-3)]">
+              {snoozedCount}
+            </span>
+          </div>
+        )}
       </div>
 
       <p className="mt-3 text-xs leading-relaxed text-[color:var(--ink-3)]">

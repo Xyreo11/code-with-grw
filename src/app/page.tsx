@@ -27,8 +27,13 @@ export default async function Page() {
     <main className="mx-auto w-full max-w-3xl px-5 py-10">
       <Header sitrep={sitrep} />
 
-      {sitrep.quiet ? (
-        <QuietState watchlistSize={sitrep.watchlistSize} />
+      {sitrep.watchlistSize === 0 ? (
+        <EmptyWatchlist />
+      ) : sitrep.quiet ? (
+        <QuietState
+          watchlistSize={sitrep.watchlistSize}
+          snoozedCount={sitrep.snoozedCount}
+        />
       ) : (
         <>
           <section className="mt-6 flex flex-col gap-3">
@@ -40,6 +45,7 @@ export default async function Page() {
           <CollapseLine
             belowBudget={sitrep.belowBudget}
             withinNormalRange={sitrep.withinNormalRange}
+            snoozedCount={sitrep.snoozedCount}
           />
         </>
       )}
@@ -51,13 +57,18 @@ export default async function Page() {
           <ThemeCard key={theme.id} theme={theme} />
         ))}
 
-        <AttentionBudget
-          budget={sitrep.budget}
-          watchlistSize={sitrep.watchlistSize}
-        />
+        {/* An all-zero budget bar makes an argument about filtering to someone
+            who has nothing to filter. */}
+        {sitrep.watchlistSize > 0 && (
+          <AttentionBudget
+            budget={sitrep.budget}
+            watchlistSize={sitrep.watchlistSize}
+            snoozedCount={sitrep.snoozedCount}
+          />
+        )}
       </div>
 
-      <Footer sitrep={sitrep} />
+      {sitrep.watchlistSize > 0 && <Footer sitrep={sitrep} />}
     </main>
   )
 }
@@ -100,20 +111,26 @@ function Header({
         Good morning, {sitrep.displayName}.
       </h1>
 
-      <p className="mt-4 font-mono text-[11px] tracking-wider text-[color:var(--ink-3)]">
-        {away
-          ? `HERE'S WHAT CHANGED SINCE YOU LAST CHECKED — ${away.toUpperCase()}`
-          : "HERE'S WHAT CHANGED SINCE YOU LAST CHECKED"}
-      </p>
+      {/* Nobody with an empty watchlist has "last checked" anything, and
+          telling them nothing needs their attention is not the point. */}
+      {sitrep.watchlistSize > 0 && (
+        <>
+          <p className="mt-4 font-mono text-[11px] tracking-wider text-[color:var(--ink-3)]">
+            {away
+              ? `HERE'S WHAT CHANGED SINCE YOU LAST CHECKED — ${away.toUpperCase()}`
+              : "HERE'S WHAT CHANGED SINCE YOU LAST CHECKED"}
+          </p>
 
-      <div className="mt-2 flex items-center justify-between gap-4">
-        <p className="text-lg text-[color:var(--ink-2)]">
-          {sitrep.items.length === 0
-            ? 'Nothing needs your attention.'
-            : `${sitrep.items.length} thing${sitrep.items.length === 1 ? '' : 's'} need${sitrep.items.length === 1 ? 's' : ''} your attention.`}
-        </p>
-        {sitrep.items.length > 0 && <MarkAllSeen />}
-      </div>
+          <div className="mt-2 flex items-center justify-between gap-4">
+            <p className="text-lg text-[color:var(--ink-2)]">
+              {sitrep.items.length === 0
+                ? 'Nothing needs your attention.'
+                : `${sitrep.items.length} thing${sitrep.items.length === 1 ? '' : 's'} need${sitrep.items.length === 1 ? 's' : ''} your attention.`}
+            </p>
+            {sitrep.items.length > 0 && <MarkAllSeen />}
+          </div>
+        </>
+      )}
     </header>
   )
 }
@@ -121,9 +138,11 @@ function Header({
 function CollapseLine({
   belowBudget,
   withinNormalRange,
+  snoozedCount,
 }: {
   belowBudget: number
   withinNormalRange: number
+  snoozedCount: number
 }) {
   return (
     <p className="mt-4 text-sm text-[color:var(--ink-3)]">
@@ -136,22 +155,82 @@ function CollapseLine({
       )}
       {withinNormalRange} instrument{withinNormalRange === 1 ? '' : 's'} moved
       within {withinNormalRange === 1 ? 'its' : 'their'} normal range.
+      {snoozedCount > 0 && (
+        <>
+          {' '}
+          <span className="text-[color:var(--ink-2)]">
+            {snoozedCount} snoozed
+          </span>{' '}
+          — still pending, not cleared.
+        </>
+      )}
     </p>
   )
 }
 
-function QuietState({ watchlistSize }: { watchlistSize: number }) {
+/**
+ * The very first screen a new account sees.
+ *
+ * Distinct from the quiet state on purpose: "0 names moved within their normal
+ * range" is technically true and completely useless. A user with nothing on
+ * their watchlist needs the next action, not a report.
+ */
+function EmptyWatchlist() {
   return (
     <section className="mt-6 rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] p-8 text-center">
       <p className="font-mono text-[11px] tracking-wider text-[color:var(--ink-3)]">
-        YOUR MARKET IS QUIET
+        NOTHING WATCHED YET
+      </p>
+      <p className="mt-3 text-lg text-[color:var(--ink-2)]">
+        Pick a few names and SITREP starts keeping watch.
+      </p>
+      <p className="mt-2 text-sm text-[color:var(--ink-3)]">
+        Your first brief covers everything that happens between now and the next
+        time you open it.
+      </p>
+      <Link
+        href="/watchlist"
+        className="mt-5 inline-block rounded-md border border-[color:var(--border-strong)] px-3 py-1.5 font-mono text-[11px] tracking-wide text-[color:var(--ink-2)] hover:border-[color:var(--accent)] hover:text-[color:var(--accent-ink)]"
+      >
+        Build your watchlist →
+      </Link>
+    </section>
+  )
+}
+
+function QuietState({
+  watchlistSize,
+  snoozedCount,
+}: {
+  watchlistSize: number
+  snoozedCount: number
+}) {
+  // An empty brief has two very different causes, and saying the wrong one is
+  // worse than saying nothing: the market was calm, or the user muted it.
+  const calm = watchlistSize - snoozedCount
+
+  return (
+    <section className="mt-6 rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] p-8 text-center">
+      <p className="font-mono text-[11px] tracking-wider text-[color:var(--ink-3)]">
+        {snoozedCount > 0 ? 'NOTHING NEW' : 'YOUR MARKET IS QUIET'}
       </p>
       <p className="mt-3 text-lg text-[color:var(--ink-2)]">
         Nothing requires your attention.
       </p>
       <p className="mt-2 text-sm text-[color:var(--ink-3)]">
-        All {watchlistSize} names moved within their normal range. This is a
-        real answer, not an empty screen.
+        {calm} name{calm === 1 ? '' : 's'} moved within{' '}
+        {calm === 1 ? 'its' : 'their'} normal range.
+        {snoozedCount > 0 ? (
+          <>
+            {' '}
+            <span className="text-[color:var(--ink-2)]">
+              {snoozedCount} snoozed
+            </span>{' '}
+            — still pending, not cleared.
+          </>
+        ) : (
+          ' This is a real answer, not an empty screen.'
+        )}
       </p>
     </section>
   )
@@ -165,7 +244,8 @@ function Footer({
   return (
     <footer className="mt-10 border-t border-[color:var(--border)] pt-4">
       <p className="font-mono text-[10px] leading-relaxed tracking-wide text-[color:var(--ink-3)]">
-        {sitrep.watchlistSize} instruments watched ·{' '}
+        {sitrep.watchlistSize} instrument
+        {sitrep.watchlistSize === 1 ? '' : 's'} watched ·{' '}
         {sitrep.dataQuality.unconfirmedCount} unconfirmed · prices reconciled
         across two independent sources
       </p>

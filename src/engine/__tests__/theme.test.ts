@@ -347,6 +347,36 @@ describe('buildNarrative', () => {
     expect(n.text).toMatch(/Nothing in your watchlist needs attention/)
   })
 
+  it('does not call a muted watchlist a calm one', () => {
+    const n = buildNarrative(
+      input({ notableCount: 0, watchlistSize: 17, snoozedCount: 1 }),
+    )
+
+    expect(n.ruleId).toBe('quiet')
+    // 16 were genuinely quiet; the 17th was silenced by the user. Claiming all
+    // 17 moved normally would assert something the engine never concluded.
+    expect(n.text).not.toMatch(/All 17 names/)
+    expect(n.text).toMatch(/16 names moved/)
+    expect(n.text).toMatch(/1 is snoozed rather than resolved/)
+  })
+
+  it('speaks in the singular when exactly one name is notable', () => {
+    const n = buildNarrative(input({ notableCount: 1 }))
+
+    expect(n.ruleId).toBe('isolated')
+    // The scattered rule's plural phrasing is nonsense about one stock: a
+    // single name cannot fail to "share a common driver" with anything.
+    expect(n.text).not.toMatch(/they do not share/)
+    expect(n.text).not.toMatch(/These look like/)
+    expect(n.text).toMatch(/One name needs attention/)
+  })
+
+  it('falls back to scattered only when several names move independently', () => {
+    const n = buildNarrative(input({ notableCount: 4 }))
+    expect(n.ruleId).toBe('scattered')
+    expect(n.text).toMatch(/4 names/)
+  })
+
   it('calls out sector-specific pressure when the market is flat', () => {
     const n = buildNarrative(
       input({

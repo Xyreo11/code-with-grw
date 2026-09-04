@@ -33,21 +33,35 @@ export function EventCard({ item }: { item: SitrepItem }) {
    * and the server drifted: the card vanished locally while the next reload
    * brought it straight back, because nothing had re-read the brief.
    */
-  async function markSeen() {
+  async function act(url: string, body: unknown) {
     setDismissed(true)
     try {
-      const res = await fetch('/api/watch-state/mark-seen', {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ symbols: [item.symbol], eventIds: item.eventIds }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) throw new Error(String(res.status))
       startTransition(() => router.refresh())
     } catch {
-      // Put the card back rather than pretending the acknowledgement landed.
+      // Put the card back rather than pretending the write landed.
       setDismissed(false)
     }
   }
+
+  /** Acknowledge: moves the cursor, so the next brief measures from now. */
+  const markSeen = () =>
+    act('/api/watch-state/mark-seen', {
+      symbols: [item.symbol],
+      eventIds: item.eventIds,
+    })
+
+  /**
+   * Defer: moves nothing. The cursor stays where it is, so this event comes
+   * back tomorrow with its original timestamp rather than being quietly lost.
+   */
+  const snooze = () =>
+    act('/api/watch-state/snooze', { eventIds: item.eventIds, hours: 24 })
 
   if (dismissed && !pending) return null
 
@@ -136,6 +150,20 @@ export function EventCard({ item }: { item: SitrepItem }) {
           className="rounded-md border border-[color:var(--border-strong)] px-2.5 py-1 font-mono text-[11px] tracking-wide text-[color:var(--ink-2)] hover:border-[color:var(--accent)] hover:text-[color:var(--accent-ink)] focus-visible:outline-2 focus-visible:outline-[color:var(--accent)]"
         >
           Mark seen
+        </button>
+        {/*
+          A bare `title` becomes the accessible name in some assistive tooling,
+          which announces the tooltip instead of the control. Naming the button
+          explicitly keeps the spoken label and the visible label identical.
+        */}
+        <button
+          type="button"
+          onClick={snooze}
+          aria-label="Snooze 24h"
+          title="Hide for 24 hours without moving your cursor"
+          className="rounded-md border border-[color:var(--border-strong)] px-2.5 py-1 font-mono text-[11px] tracking-wide text-[color:var(--ink-2)] hover:border-[color:var(--accent)] hover:text-[color:var(--accent-ink)] focus-visible:outline-2 focus-visible:outline-[color:var(--accent)]"
+        >
+          Snooze 24h
         </button>
       </div>
     </article>
