@@ -1,10 +1,12 @@
 import type { Bar, FeatureVector } from './types'
 import {
   atr,
+  correlation,
   linreg,
   logReturn,
   logReturns,
   median,
+  percentileRank,
   realisedVol,
   sma,
   stdev,
@@ -19,6 +21,13 @@ export const MIN_HISTORY = 60
 
 /** Window used for the rolling market/sector regressions. */
 const BETA_WINDOW = 90
+
+/** Short and long windows for the correlation-break comparison. */
+const CORR_SHORT = 20
+const CORR_LONG = 120
+
+/** Trailing sample used to rank today's volatility against the name's own past. */
+const QUIET_LOOKBACK = 252
 
 /**
  * Compute the feature vector for the LAST bar in `bars`.
@@ -78,6 +87,14 @@ export function computeFeatures(
   const marketReg = regressAgainst(bars, benchmarkBars)
   const sectorReg = regressAgainst(bars, sectorBars)
 
+  const corrSectorShort = correlationAgainst(bars, sectorBars, CORR_SHORT)
+  const corrSectorLong = correlationAgainst(bars, sectorBars, CORR_LONG)
+
+  // Where today's 10-day volatility sits in the name's own trailing year. An
+  // absolute vol threshold cannot work across a utility and a small-cap; a
+  // percentile of its own history can.
+  const rv10Pct = rv10 === null ? null : rankRv10(closes, rv10)
+
   // Confidence and confirmation propagate from the bars this vector actually
   // depends on. Worst case wins: one unconfirmed bar in the window taints the
   // vector, which in turn caps the severity of any event derived from it.
@@ -111,9 +128,67 @@ export function computeFeatures(
     betaSector: sectorReg?.beta ?? null,
     residSector: sectorReg?.residualToday ?? null,
     residSectorStd: sectorReg?.residualStd ?? null,
+    corrSectorShort,
+    corrSectorLong,
+    rv10Pct,
     confidence: Number.isFinite(confidence) ? confidence : 1,
     confirmed,
   }
+}
+
+/**
+ * Correlation of the instrument's returns with a proxy's over the last `n`
+ * paired sessions.
+ *
+ * Shares `regressAgainst`'s date-intersection discipline for the same reason:
+ * positional pairing across a holiday one series observes and the other does
+ * not would offset every subsequent return and produce a confident, wrong
+ * number - which for a detector whose entire job is to notice a relationship
+ * changing would be indistinguishable from the signal itself.
+ */
+function correlationAgainst(
+  bars: Bar[],
+  proxyBars: Bar[],
+  n: number,
+): number | null {
+  if (proxyBars.length < 20) return null
+
+  const proxyByDate = new Map(proxyBars.map((b) => [b.date, b.closeAdj]))
+  const selfCloses: number[] = []
+  const proxyCloses: number[] = []
+
+  for (const bar of bars) {
+    const proxyClose = proxyByDate.get(bar.date)
+    if (proxyClose === undefined) continue
+    selfCloses.push(bar.closeAdj)
+    proxyCloses.push(proxyClose)
+  }
+
+  // n returns need n+1 closes.
+  if (selfCloses.length < n + 1) return null
+
+  const a = logReturns(selfCloses.slice(selfCloses.length - (n + 1)))
+  const b = logReturns(proxyCloses.slice(proxyCloses.length - (n + 1)))
+
+  return correlation(a, b)
+}
+
+/**
+ * Percentile rank of today's 10-session realised vol within the same measure
+ * computed across the trailing year. 0 means the quietest the name has been.
+ */
+function rankRv10(closes: number[], today: number): number | null {
+  if (closes.length < 40) return null
+
+  const sample: number[] = []
+  const start = Math.max(11, closes.length - QUIET_LOOKBACK)
+  for (let i = start; i < closes.length; i++) {
+    const v = realisedVol(closes.slice(0, i + 1), 10)
+    if (v !== null) sample.push(v)
+  }
+  if (sample.length < 30) return null
+
+  return percentileRank(today, sample)
 }
 
 interface RegressionSummary {

@@ -49,6 +49,23 @@ export const THRESHOLDS = {
   rangeBreakAtr: 0.5,
   volRegimeRatio: 2.0,
   earningsHours: 48,
+
+  /**
+   * Correlation break. Two gates: the relationship has to have existed
+   * (`corrBreakBaseline`) before it can be said to have broken, and the fall
+   * has to be large (`corrBreakDrop`). Without the first gate every pair that
+   * never correlated would "break" constantly.
+   */
+  corrBreakBaseline: 0.6,
+  corrBreakDrop: 0.45,
+
+  /**
+   * Anomalous quiet. Bottom decile of the name's own trailing year, AND a
+   * short-vs-long contraction, so a name in a permanently sleepy regime does
+   * not report itself as newly still every single day.
+   */
+  quietPercentile: 0.1,
+  quietContraction: 0.7,
 } as const
 
 function pct(x: number): string {
@@ -345,6 +362,106 @@ function hoursUntil(
   return (at - from) / 3_600_000
 }
 
+/**
+ * 7. A relationship that stopped holding.
+ *
+ * Every other detector answers "did the price do something unusual?". This one
+ * asks a different question: has this name stopped behaving like its peers?
+ *
+ * A stock that tracked its sector at 0.85 for six months and now tracks it at
+ * 0.15 has changed in a way no price move describes - the move may be small,
+ * or absent, while the thing the position actually depended on has gone. That
+ * is meaningful change under any honest definition, and it is invisible to a
+ * watchlist that only reads returns.
+ *
+ * Directionless on purpose: decoupling is not bullish or bearish, it is a
+ * statement about structure.
+ */
+export function detectCorrelationBreak(
+  input: DetectorInput,
+): CandidateEvent | null {
+  const { features: f } = input
+  if (f.corrSectorLong === null || f.corrSectorShort === null) return null
+
+  // There has to have been a relationship before it can break.
+  if (f.corrSectorLong < THRESHOLDS.corrBreakBaseline) return null
+
+  const drop = f.corrSectorLong - f.corrSectorShort
+  if (drop < THRESHOLDS.corrBreakDrop) return null
+
+  return {
+    detector: 'correlation_break',
+    symbol: input.symbol,
+    marketTime: f.date,
+    direction: 0,
+    magnitude: drop,
+    headline:
+      `Stopped tracking its sector — 20-day correlation ${f.corrSectorShort.toFixed(2)}, ` +
+      `against ${f.corrSectorLong.toFixed(2)} over the last 120 sessions.`,
+    signals: [
+      signal(
+        'correlation_break',
+        `Sector correlation fell ${f.corrSectorLong.toFixed(2)} to ${f.corrSectorShort.toFixed(2)}`,
+        'relative',
+        drop,
+        // Already bounded 0..2 by construction; a full inversion is the extreme.
+        clamp(drop / 1.5, 0, 1),
+      ),
+    ],
+  }
+}
+
+/**
+ * 8. Unusual stillness.
+ *
+ * The one detector that fires on the ABSENCE of movement. A name compressed
+ * into the quietest decile of its own year is not "nothing happening" - low
+ * realised volatility is the precondition for expansion, and a position that
+ * has gone quiet after being active is a change the holder should know about
+ * before the expansion, not after.
+ *
+ * This is the clearest case for the product's central claim: what changed is
+ * not the same question as what moved.
+ */
+export function detectQuietRegime(
+  input: DetectorInput,
+): CandidateEvent | null {
+  const { features: f } = input
+  if (f.rv10Pct === null) return null
+  if (f.rv10Pct > THRESHOLDS.quietPercentile) return null
+
+  // Second gate: the name must have GONE quiet, not merely be quiet. A stock
+  // that sits in the bottom decile permanently would otherwise report the same
+  // non-news every session.
+  if (!(f.rv60 > 0)) return null
+  const contraction = f.rv10 / f.rv60
+  if (contraction > THRESHOLDS.quietContraction) return null
+
+  const pctile = Math.round(f.rv10Pct * 100)
+
+  return {
+    detector: 'quiet_regime',
+    symbol: input.symbol,
+    marketTime: f.date,
+    direction: 0,
+    magnitude: 1 - f.rv10Pct,
+    headline:
+      `Unusually still — 10-day volatility is quieter than ${100 - pctile}% ` +
+      `of the last year, and ${contraction.toFixed(2)}× its 60-day level.`,
+    signals: [
+      signal(
+        'quiet_regime',
+        `Volatility in the ${pctile <= 1 ? 'lowest 1%' : `bottom ${pctile}%`} of its own year`,
+        'volatility',
+        f.rv10Pct,
+        // Deeper into the tail means a stronger signal, so invert the rank and
+        // stretch the decile across the full 0..1 range.
+        clamp((THRESHOLDS.quietPercentile - f.rv10Pct) / THRESHOLDS.quietPercentile, 0, 1),
+      ),
+    ],
+  }
+}
+
 export const DETECTORS = [
   detectMoveSinceLastSeen,
   detectVolumeSpike,
@@ -352,6 +469,8 @@ export const DETECTORS = [
   detectRangeBreak,
   detectVolRegimeShift,
   detectEarningsUpcoming,
+  detectCorrelationBreak,
+  detectQuietRegime,
 ] as const
 
 /** Run every detector and return whatever fired. Order is stable for testing. */

@@ -94,6 +94,20 @@ export interface FeatureVector {
   residSector: number | null
   residSectorStd: number | null
 
+  /**
+   * Correlation with the sector ETF over 20 and 120 sessions. The GAP between
+   * them is the signal: a name that tracked its peers for six months and stops
+   * doing so has changed in a way no price move describes.
+   */
+  corrSectorShort: number | null
+  corrSectorLong: number | null
+
+  /**
+   * Where today's 10-session volatility sits in the name's own trailing year,
+   * 0..1. Near zero means unusually still - which is itself a change.
+   */
+  rv10Pct: number | null
+
   /** Worst-case data confidence across the bars this vector depends on. */
   confidence: number
   confirmed: boolean
@@ -108,6 +122,8 @@ export type DetectorId =
   | 'range_break'
   | 'vol_regime_shift'
   | 'earnings_upcoming'
+  | 'correlation_break'
+  | 'quiet_regime'
 
 /**
  * A candidate event emitted by a detector, before scoring.
